@@ -1,0 +1,14 @@
+[Unit]
+Description=Motion detector - frame diffing with classifier upload
+After=network-online.target cam-stream.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+ExecStart=/usr/bin/python3 /usr/local/bin/motion-detect.py
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
