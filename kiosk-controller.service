@@ -1,0 +1,12 @@
+[Unit]
+Description=Kiosk Controller - URL rotation and web control panel
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/local/bin/kiosk-controller.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

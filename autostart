@@ -1,0 +1,26 @@
+# Disable screen blanking
+wlr-randr --output HDMI-A-1 --on 2>/dev/null
+
+# Wait for network + Tailscale to come up
+sleep 15
+
+# Clear Chromium crash state before launch
+sed -i 's/"exited_cleanly":false/"exited_cleanly":true/' ~/.config/chromium/Default/Preferences 2>/dev/null
+sed -i 's/"exit_type":"Crashed"/"exit_type":"Normal"/' ~/.config/chromium/Default/Preferences 2>/dev/null
+
+# Launch Chromium in kiosk mode with CDP remote debugging
+chromium \
+  --kiosk \
+  --noerrdialogs \
+  --disable-infobars \
+  --no-first-run \
+  --disable-session-crashed-bubble \
+  --hide-crash-restore-bubble \
+  --disable-features=Translate,InfiniteSessionRestore \
+  --check-for-update-interval=31536000 \
+  --autoplay-policy=no-user-gesture-required \
+  --remote-debugging-port=9222 \
+  --remote-allow-origins=* \
+  --password-store=basic \
+  --disable-component-update \
+  https://dakboard.com/app/screenPredefined?p=7670732593b74717b72fedf004de3640 &

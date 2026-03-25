@@ -1,0 +1,13 @@
+<!DOCTYPE html>
+<html><head><style>
+  * { margin:0; padding:0; background:#000; overflow:hidden; }
+  img { width:100vw; height:100vh; object-fit:contain; }
+</style></head><body>
+<img id="cam" src="http://100.66.35.101:8080/cam.mjpg">
+<script>
+const img = document.getElementById('cam');
+img.onerror = () => setTimeout(() => {
+  img.src = "http://100.66.35.101:8080/cam.mjpg?" + Date.now();
+}, 5000);
+</script>
+</body></html>
