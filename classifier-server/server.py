@@ -99,6 +99,22 @@ async def classify(request: Request):
     return meta
 
 
+def _enrich_entry(det_dir: Path, meta: dict) -> None:
+    meta["model"] = MODEL_NAME
+    meta["conf_threshold"] = CONFIDENCE_THRESHOLD
+    orig = det_dir / "original.jpg"
+    if orig.exists():
+        try:
+            meta["bytes"] = orig.stat().st_size
+        except OSError:
+            pass
+        try:
+            with Image.open(orig) as im:
+                meta["image_width"], meta["image_height"] = im.size
+        except OSError:
+            pass
+
+
 @app.get("/api/detections")
 async def list_detections(
     filter_class: str = Query(None, alias="class"),
@@ -120,10 +136,24 @@ async def list_detections(
                 continue
         meta["thumbnail"] = f"/detections/{det_dir.name}/annotated.jpg"
         meta["original_url"] = f"/detections/{det_dir.name}/original.jpg"
+        _enrich_entry(det_dir, meta)
         entries.append(meta)
         if len(entries) >= limit:
             break
     return entries
+
+
+@app.delete("/api/detections/{detection_id}")
+async def delete_detection(detection_id: str):
+    if ".." in detection_id or "/" in detection_id or "\\" in detection_id:
+        return JSONResponse({"error": "invalid id"}, status_code=400)
+    det_path = (DETECTIONS_DIR / detection_id).resolve()
+    if not str(det_path).startswith(str(DETECTIONS_DIR.resolve())):
+        return JSONResponse({"error": "invalid id"}, status_code=400)
+    if not det_path.is_dir():
+        return JSONResponse({"error": "not found"}, status_code=404)
+    shutil.rmtree(det_path)
+    return {"ok": True}
 
 
 @app.get("/detections/{detection_id}/{filename}")
@@ -145,12 +175,27 @@ GALLERY_HTML = r"""<!DOCTYPE html>
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
      background:var(--bg);color:var(--text);min-height:100vh}
 .hdr{padding:1rem 1.5rem;display:flex;align-items:center;justify-content:space-between;
-     border-bottom:1px solid #222}
+     flex-wrap:wrap;gap:.75rem;border-bottom:1px solid #222}
 .hdr h1{font-size:1.3rem;color:var(--accent)}
-.hdr select{background:#222;color:var(--text);border:1px solid #333;border-radius:.4rem;
-            padding:.4rem .6rem;font-size:.9rem}
+.hdr select,.hdr button{background:#222;color:var(--text);border:1px solid #333;border-radius:.4rem;
+            padding:.4rem .6rem;font-size:.9rem;cursor:pointer}
+.hdr button.danger{border-color:#a93226;color:#f5b7b1}
+.controls{display:flex;flex-wrap:wrap;gap:.75rem;align-items:center}
+.meta-panel{font-size:.8rem;color:var(--muted);display:flex;flex-wrap:wrap;gap:.75rem;align-items:center}
+.meta-panel label{display:flex;align-items:center;gap:.35rem;cursor:pointer}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));
       gap:1rem;padding:1.5rem}
+.grid.highlight{display:block;padding:1.5rem}
+.hero-wrap{margin-bottom:1.5rem}
+.hero-wrap .hero-label{font-size:.85rem;color:var(--muted);margin-bottom:.5rem}
+.hero{display:block;background:var(--card);border-radius:.75rem;overflow:hidden;max-width:min(960px,100%)}
+.hero img{width:100%;max-height:70vh;object-fit:contain;cursor:pointer;display:block;background:#0a0a12}
+.hero .info{padding:.75rem 1rem}
+.hero .label{font-weight:700;font-size:1.1rem;margin-bottom:.25rem}
+.hero .time{color:var(--muted);font-size:.85rem}
+.subgrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.75rem}
+@media(max-width:900px){.subgrid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:520px){.subgrid{grid-template-columns:1fr}}
 .card{background:var(--card);border-radius:.75rem;overflow:hidden;transition:.2s}
 .card:hover{transform:translateY(-2px);box-shadow:0 4px 20px rgba(0,0,0,.4)}
 .card img{width:100%;aspect-ratio:16/9;object-fit:cover;cursor:pointer}
@@ -159,6 +204,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
 .card .time{color:var(--muted);font-size:.8rem}
 .card .label.animal{color:#58d68d}
 .card .label.motion{color:#f0b030}
+.card .actions{margin-top:.5rem;display:flex;gap:.5rem;align-items:center}
+.card .meta-extra{font-size:.75rem;color:var(--muted);margin-top:.35rem;line-height:1.4}
 .empty{text-align:center;color:var(--muted);padding:4rem;font-size:1.1rem}
 .stats{color:var(--muted);font-size:.85rem}
 .overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.9);z-index:100;
@@ -168,15 +215,27 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
 </style></head><body>
 <div class="hdr">
   <h1>Backyard Detections</h1>
-  <div style="display:flex;gap:.75rem;align-items:center">
+  <div class="controls">
     <span class="stats" id="stats"></span>
-    <select id="filter" onchange="load()">
+    <select id="layout" title="Layout">
+      <option value="list">List</option>
+      <option value="highlight_recent">Highlight recent</option>
+    </select>
+    <select id="filter" onchange="savePrefs();load()">
       <option value="">All</option>
       <option value="bird">Birds</option>
       <option value="cat">Cats</option>
       <option value="dog">Dogs</option>
       <option value="person">People</option>
     </select>
+    <div class="meta-panel" id="metaPanel">
+      <label><input type="checkbox" data-flag="relative"> Relative</label>
+      <label><input type="checkbox" data-flag="iso"> Timestamp</label>
+      <label><input type="checkbox" data-flag="conf"> Confidence</label>
+      <label><input type="checkbox" data-flag="bbox"> Boxes</label>
+      <label><input type="checkbox" data-flag="model"> Model</label>
+      <label><input type="checkbox" data-flag="size"> Size</label>
+    </div>
   </div>
 </div>
 <div class="grid" id="grid"></div>
@@ -185,6 +244,57 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
   <img id="overlay-img">
 </div>
 <script>
+const LS='backyardGalleryPrefs';
+const META_FLAGS=['relative','iso','conf','bbox','model','size'];
+function parseMeta(s){
+  if(!s)return new Set();
+  return new Set(s.split(',').map(x=>x.trim()).filter(Boolean));
+}
+function readQS(){
+  const p=new URLSearchParams(location.search);
+  const m=p.get('meta');
+  return {
+    layout:p.get('layout')||'',
+    filter:p.get('class')||'',
+    meta:m?parseMeta(m):null,
+  };
+}
+function loadPrefs(){
+  let o={};
+  try{o=JSON.parse(localStorage.getItem(LS)||'{}');}catch(e){}
+  const q=readQS();
+  document.getElementById('layout').value=q.layout||o.layout||'list';
+  document.getElementById('filter').value=q.filter!==''?q.filter:(o.filter||'');
+  const metaSet=q.meta||(o.metaFlags?new Set(o.metaFlags):new Set(['relative']));
+  document.querySelectorAll('#metaPanel input[data-flag]').forEach(cb=>{
+    cb.checked=metaSet.has(cb.dataset.flag);
+  });
+}
+function getMetaSet(){
+  const s=new Set();
+  document.querySelectorAll('#metaPanel input[data-flag]').forEach(cb=>{
+    if(cb.checked)s.add(cb.dataset.flag);
+  });
+  return s;
+}
+function savePrefs(){
+  const layout=document.getElementById('layout').value;
+  const filter=document.getElementById('filter').value;
+  const metaSet=getMetaSet();
+  const metaFlags=META_FLAGS.filter(f=>metaSet.has(f));
+  localStorage.setItem(LS,JSON.stringify({layout,filter,metaFlags}));
+  const p=new URLSearchParams();
+  p.set('layout',layout);
+  if(filter)p.set('class',filter);
+  if(metaFlags.length)p.set('meta',metaFlags.join(','));
+  const qs=p.toString();
+  history.replaceState(null,'',qs?'?'+qs:location.pathname);
+}
+document.getElementById('layout').addEventListener('change',()=>{savePrefs();load();});
+document.getElementById('filter').addEventListener('change',()=>{savePrefs();load();});
+document.querySelectorAll('#metaPanel input[data-flag]').forEach(cb=>{
+  cb.addEventListener('change',()=>{savePrefs();load();});
+});
 function fmt(iso){
   const d=new Date(iso);
   const now=new Date();
@@ -194,31 +304,110 @@ function fmt(iso){
   if(diff<86400000)return Math.floor(diff/3600000)+'h ago';
   return d.toLocaleDateString()+' '+d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
 }
+function fmtIso(iso){
+  try{return new Date(iso).toLocaleString();}catch(e){return iso;}
+}
 function show(url){
   document.getElementById('overlay-img').src=url;
   document.getElementById('overlay').classList.add('show');
 }
+function fmtBytes(n){
+  if(n==null)return '';
+  if(n<1024)return n+' B';
+  if(n<1048576)return (n/1024).toFixed(1)+' KB';
+  return (n/1048576).toFixed(2)+' MB';
+}
+function extraMeta(d){
+  const m=getMetaSet();
+  const parts=[];
+  if(m.has('iso'))parts.push(fmtIso(d.timestamp));
+  if(m.has('model')&&d.model)parts.push('model '+d.model);
+  if(m.has('size')){
+    const bits=[];
+    if(d.image_width)bits.push(d.image_width+'×'+d.image_height);
+    if(d.bytes!=null)bits.push(fmtBytes(d.bytes));
+    if(bits.length)parts.push(bits.join(' · '));
+  }
+  if(m.has('conf')){
+    if(d.conf_threshold!=null)parts.push('conf ≥ '+d.conf_threshold);
+    if(d.detections&&d.detections.length){
+      parts.push('det '+d.detections.map(x=>x.class+':'+x.confidence).join(', '));
+    }
+  }
+  if(m.has('bbox')&&d.detections&&d.detections.length){
+    parts.push('bbox '+d.detections.map(x=>'['+x.bbox.join(',')+']').join(' '));
+  }
+  if(!parts.length)return '';
+  return '<div class="meta-extra">'+parts.join(' · ')+'</div>';
+}
+function timeLine(d){
+  return getMetaSet().has('relative')?('<div class="time">'+fmt(d.timestamp)+'</div>'):'';
+}
+function cardHtml(d){
+  const isAnimal=d.animal_detections&&d.animal_detections.length>0;
+  const id=JSON.stringify(d.id);
+  const thumb=JSON.stringify(d.thumbnail);
+  const orig=JSON.stringify(d.original_url);
+  return '<div class="card" data-id="'+escapeAttr(d.id)+'">'+
+    '<img src='+thumb+' onclick="show('+orig+')" loading="lazy">'+
+    '<div class="info">'+
+    '<div class="label '+(isAnimal?'animal':'motion')+'">'+escapeHtml(d.label)+'</div>'+
+    timeLine(d)+extraMeta(d)+
+    '<div class="actions"><button type="button" class="danger" onclick="delDet('+id+',event)">Delete</button></div>'+
+    '</div></div>';
+}
+function escapeHtml(s){
+  const div=document.createElement('div');
+  div.textContent=s;
+  return div.innerHTML;
+}
+function escapeAttr(s){
+  return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;');
+}
+async function delDet(id,ev){
+  ev.stopPropagation();
+  if(!confirm('Delete this detection permanently?'))return;
+  const res=await fetch('/api/detections/'+encodeURIComponent(id),{method:'DELETE'});
+  if(!res.ok){alert('Delete failed');return;}
+  load();
+}
 async function load(){
+  savePrefs();
   const cls=document.getElementById('filter').value;
-  const url='/api/detections'+(cls?'?class='+cls:'');
+  const layout=document.getElementById('layout').value;
+  const url='/api/detections'+(cls?'?class='+encodeURIComponent(cls):'');
   const res=await fetch(url);
   const data=await res.json();
   const grid=document.getElementById('grid');
   const empty=document.getElementById('empty');
   const stats=document.getElementById('stats');
+  grid.className='grid'+(layout==='highlight_recent'?' highlight':'');
   if(!data.length){grid.innerHTML='';empty.style.display='block';stats.textContent='';return;}
   empty.style.display='none';
   stats.textContent=data.length+' detection'+(data.length!==1?'s':'');
-  grid.innerHTML=data.map(d=>{
-    const isAnimal=d.animal_detections&&d.animal_detections.length>0;
-    return `<div class="card">
-      <img src="${d.thumbnail}" onclick="show('${d.original_url}')" loading="lazy">
-      <div class="info">
-        <div class="label ${isAnimal?'animal':'motion'}">${d.label}</div>
-        <div class="time">${fmt(d.timestamp)}</div>
-      </div></div>`;
-  }).join('');
+  if(layout==='highlight_recent'&&data.length){
+    const hero=data[0];
+    const rest=data.slice(1);
+    const isAnimal=hero.animal_detections&&hero.animal_detections.length>0;
+    const heroOrig=JSON.stringify(hero.original_url);
+    const heroThumb=JSON.stringify(hero.thumbnail);
+    const heroId=JSON.stringify(hero.id);
+    const heroBlock=
+      '<div class="hero-wrap"><div class="hero-label">Most recent</div>'+
+      '<div class="card hero">'+
+      '<img src='+heroThumb+' onclick="show('+heroOrig+')" loading="eager">'+
+      '<div class="info">'+
+      '<div class="label '+(isAnimal?'animal':'motion')+'">'+escapeHtml(hero.label)+'</div>'+
+      timeLine(hero)+extraMeta(hero)+
+      '<div class="actions"><button type="button" class="danger" onclick="delDet('+heroId+',event)">Delete</button></div>'+
+      '</div></div></div>';
+    const sub=rest.map(d=>cardHtml(d)).join('');
+    grid.innerHTML=heroBlock+(rest.length?'<div class="subgrid">'+sub+'</div>':'');
+  }else{
+    grid.innerHTML=data.map(d=>cardHtml(d)).join('');
+  }
 }
+loadPrefs();
 load();
 setInterval(load,10000);
 </script></body></html>"""

@@ -5,6 +5,7 @@ import json
 import os
 import threading
 import time
+import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -13,6 +14,8 @@ import websocket
 CONTROL_PORT = 8088
 CDP_BASE = "http://localhost:9222"
 CONFIG_PATH = "/home/rpi3b/.kiosk-config.json"
+
+BACKYARD_BASE = "http://100.123.231.73:8089"
 
 VIEWS = {
     "dakboard": {
@@ -23,16 +26,45 @@ VIEWS = {
         "name": "Camera",
         "url": "file:///home/rpi3b/cam-viewer.html",
     },
+    "backyard": {
+        "name": "Backyard",
+        "url": None,
+    },
 }
-VIEW_ORDER = ["dakboard", "camera"]
+VIEW_ORDER = ["dakboard", "camera", "backyard"]
+
+META_FLAGS = ("relative", "iso", "conf", "bbox", "model", "size")
 
 state_lock = threading.Lock()
 nav_lock = threading.Lock()
 state = {
     "current_view": "dakboard",
     "rotate": True,
-    "durations": {"dakboard": 30, "camera": 30},
+    "durations": {"dakboard": 30, "camera": 30, "backyard": 30},
+    "backyard_layout": "list",
+    "backyard_meta": ["relative"],
 }
+
+
+def build_backyard_query():
+    with state_lock:
+        layout = state.get("backyard_layout", "list")
+        meta = state.get("backyard_meta", ["relative"])
+    if isinstance(meta, str):
+        meta = [x.strip() for x in meta.split(",") if x.strip()]
+    if not meta:
+        meta = ["relative"]
+    params = [("layout", layout), ("meta", ",".join(meta))]
+    return urllib.parse.urlencode(params)
+
+
+def get_view_url(view_key):
+    if view_key == "backyard":
+        return f"{BACKYARD_BASE}/?{build_backyard_query()}"
+    u = VIEWS.get(view_key, {}).get("url")
+    if u is None:
+        raise ValueError(view_key)
+    return u
 
 
 def load_config():
@@ -46,13 +78,26 @@ def load_config():
                 for k in VIEWS:
                     if k in saved["durations"]:
                         state["durations"][k] = max(5, min(3600, int(saved["durations"][k])))
+            if "backyard_layout" in saved and saved["backyard_layout"] in ("list", "highlight_recent"):
+                state["backyard_layout"] = saved["backyard_layout"]
+            if "backyard_meta" in saved:
+                bm = saved["backyard_meta"]
+                if isinstance(bm, str):
+                    bm = [x.strip() for x in bm.split(",") if x.strip()]
+                if isinstance(bm, list):
+                    state["backyard_meta"] = [x for x in bm if x in META_FLAGS]
     except (FileNotFoundError, json.JSONDecodeError, ValueError):
         pass
 
 
 def save_config():
     with state_lock:
-        data = {"rotate": state["rotate"], "durations": dict(state["durations"])}
+        data = {
+            "rotate": state["rotate"],
+            "durations": dict(state["durations"]),
+            "backyard_layout": state.get("backyard_layout", "list"),
+            "backyard_meta": list(state.get("backyard_meta", ["relative"])),
+        }
     try:
         with open(CONFIG_PATH, "w") as f:
             json.dump(data, f, indent=2)
@@ -84,7 +129,8 @@ def switch_to(view_key):
         return False
     with nav_lock:
         try:
-            cdp_navigate(VIEWS[view_key]["url"])
+            url = get_view_url(view_key)
+            cdp_navigate(url)
             with state_lock:
                 state["current_view"] = view_key
             return True
@@ -145,14 +191,14 @@ CONTROL_HTML = r"""<!DOCTYPE html>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
      background:var(--bg);color:#eaeaea;min-height:100vh;padding:1.25rem}
-.w{max-width:28rem;margin:0 auto}
+.w{max-width:32rem;margin:0 auto}
 h1{text-align:center;font-size:1.3rem;color:var(--ac);margin-bottom:1.5rem}
 .c{background:var(--card);border-radius:.75rem;padding:1.25rem;margin-bottom:1rem}
 .lb{font-size:.8rem;color:#888;text-transform:uppercase;letter-spacing:.08em;margin-bottom:.75rem}
 .st{font-size:1.5rem;font-weight:700}
-.st.dakboard{color:#5dade2} .st.camera{color:#58d68d}
-.r{display:flex;gap:.6rem}
-.b{flex:1;padding:.9rem;border:none;border-radius:.5rem;font-size:1rem;
+.st.dakboard{color:#5dade2} .st.camera{color:#58d68d} .st.backyard{color:#bb8fce}
+.r{display:flex;gap:.6rem;flex-wrap:wrap}
+.b{flex:1;min-width:5rem;padding:.9rem;border:none;border-radius:.5rem;font-size:1rem;
    font-weight:600;cursor:pointer;background:var(--inp);color:#ccc;transition:.15s}
 .b:active{transform:scale(.97)} .b.on{background:var(--ac);color:#fff}
 .fb{display:flex;align-items:center;justify-content:space-between}
@@ -166,6 +212,10 @@ h1{text-align:center;font-size:1.3rem;color:var(--ac);margin-bottom:1.5rem}
 .dr{margin-top:.75rem}
 .dr input{width:5rem;padding:.5rem;border:1px solid #333;border-radius:.4rem;
           background:var(--bg);color:#eaeaea;font-size:1rem;text-align:center}
+.dr select{width:100%;padding:.5rem;border:1px solid #333;border-radius:.4rem;
+           background:var(--bg);color:#eaeaea;font-size:.9rem}
+.meta{font-size:.85rem;color:#aaa;display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;margin-top:.5rem}
+.meta label{display:flex;align-items:center;gap:.25rem;cursor:pointer}
 .mu{text-align:center;color:#555;font-size:.75rem;margin-top:1rem}
 </style></head><body>
 <div class="w">
@@ -179,6 +229,7 @@ h1{text-align:center;font-size:1.3rem;color:var(--ac);margin-bottom:1.5rem}
   <div class="r">
     <button class="b" id="bd" onclick="sw('dakboard')">Dakboard</button>
     <button class="b" id="bc" onclick="sw('camera')">Camera</button>
+    <button class="b" id="bb" onclick="sw('backyard')">Backyard</button>
   </div>
 </div>
 <div class="c">
@@ -197,6 +248,30 @@ h1{text-align:center;font-size:1.3rem;color:var(--ac);margin-bottom:1.5rem}
     <div><input id="dc" type="number" min="5" max="3600" value="30"
          onchange="sd('camera',this.value)"> s</div>
   </div>
+  <div class="dr fb">
+    <span>Backyard</span>
+    <div><input id="db" type="number" min="5" max="3600" value="30"
+         onchange="sd('backyard',this.value)"> s</div>
+  </div>
+</div>
+<div class="c">
+  <div class="lb">Backyard gallery</div>
+  <div class="dr">
+    <span style="display:block;margin-bottom:.35rem">Layout</span>
+    <select id="bl" onchange="sb()">
+      <option value="list">List</option>
+      <option value="highlight_recent">Highlight recent</option>
+    </select>
+  </div>
+  <div class="meta" id="bm">
+    <span style="width:100%;margin-bottom:.25rem">Metadata on URL</span>
+    <label><input type="checkbox" data-m="relative"> Relative</label>
+    <label><input type="checkbox" data-m="iso"> Timestamp</label>
+    <label><input type="checkbox" data-m="conf"> Confidence</label>
+    <label><input type="checkbox" data-m="bbox"> Boxes</label>
+    <label><input type="checkbox" data-m="model"> Model</label>
+    <label><input type="checkbox" data-m="size"> Size</label>
+  </div>
 </div>
 <p class="mu">rpi3b-hallway-kiosk</p>
 </div>
@@ -210,14 +285,31 @@ function rf(){
   api('GET','status').then(d=>{
     const v=$('vn'); v.textContent=d.current_view_name; v.className='st '+d.current_view;
     $('ro').checked=d.rotate; $('rt').textContent=d.rotate?'On':'Off';
-    $('dd').value=d.durations.dakboard; $('dc').value=d.durations.camera;
+    $('dd').value=d.durations.dakboard; $('dc').value=d.durations.camera; $('db').value=d.durations.backyard;
     $('bd').className='b'+(d.current_view==='dakboard'?' on':'');
     $('bc').className='b'+(d.current_view==='camera'?' on':'');
+    $('bb').className='b'+(d.current_view==='backyard'?' on':'');
+    $('bl').value=d.backyard_layout||'list';
+    const set=d.backyard_meta||['relative'];
+    document.querySelectorAll('#bm input[data-m]').forEach(cb=>{
+      cb.checked=set.indexOf(cb.dataset.m)>=0;
+    });
   }).catch(()=>{});
 }
 function sw(v){api('POST','switch',{view:v}).then(rf)}
 function tr(){api('POST','rotate').then(rf)}
 function sd(v,s){api('POST','duration',{view:v,seconds:parseInt(s)}).then(rf)}
+function sb(){
+  const layout=$('bl').value;
+  const meta=[];
+  document.querySelectorAll('#bm input[data-m]').forEach(cb=>{
+    if(cb.checked)meta.push(cb.dataset.m);
+  });
+  api('POST','backyard',{layout,meta}).then(rf);
+}
+document.querySelectorAll('#bm input[data-m]').forEach(cb=>{
+  cb.addEventListener('change',sb);
+});
 rf(); setInterval(rf,3000);
 </script></body></html>"""
 
@@ -258,6 +350,9 @@ class ControlHandler(BaseHTTPRequestHandler):
                     "current_view_name": VIEWS.get(cv, {}).get("name", cv),
                     "rotate": state["rotate"],
                     "durations": dict(state["durations"]),
+                    "backyard_layout": state.get("backyard_layout", "list"),
+                    "backyard_meta": list(state.get("backyard_meta", ["relative"])),
+                    "backyard_url": get_view_url("backyard") if "backyard" in VIEWS else "",
                 }
             self._json(d)
         else:
@@ -290,6 +385,29 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self._json({"ok": True})
             else:
                 self._json({"ok": False, "error": "invalid view or duration"}, 400)
+
+        elif self.path == "/api/backyard":
+            b = self._body()
+            layout = b.get("layout")
+            meta = b.get("meta")
+            if layout not in ("list", "highlight_recent"):
+                self._json({"ok": False, "error": "invalid layout"}, 400)
+                return
+            if not isinstance(meta, list):
+                self._json({"ok": False, "error": "meta must be a list"}, 400)
+                return
+            clean = [x for x in meta if x in META_FLAGS]
+            if not clean:
+                clean = ["relative"]
+            with state_lock:
+                state["backyard_layout"] = layout
+                state["backyard_meta"] = clean
+            save_config()
+            with state_lock:
+                on_backyard = state.get("current_view") == "backyard"
+            if on_backyard:
+                switch_to("backyard")
+            self._json({"ok": True})
         else:
             self.send_error(404)
 

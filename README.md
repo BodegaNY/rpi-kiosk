@@ -1,6 +1,6 @@
 # RPi Kiosk & Camera System
 
-Raspberry Pi hallway kiosk that rotates between [DAKboard](https://dakboard.com) and a live camera feed, with a web-based control panel.
+Raspberry Pi hallway kiosk that rotates between [DAKboard](https://dakboard.com), a live camera feed, and the **Backyard** detection gallery (classifier PC over Tailscale), with a web-based control panel.
 
 ## Devices
 
@@ -38,14 +38,16 @@ Both run Pi OS Trixie (Debian trixie) and are connected via Tailscale.
 ### How it works
 
 1. **labwc autostart** waits for network/Tailscale, clears Chromium crash state, launches Chromium in kiosk mode with CDP remote debugging on port 9222
-2. **kiosk-controller.py** (systemd user service) connects to Chromium via CDP WebSocket and rotates between Dakboard and the camera viewer every 30 seconds (configurable)
+2. **kiosk-controller.py** (systemd user service) connects to Chromium via CDP WebSocket and rotates between Dakboard, the camera viewer, and the Backyard gallery (Tailscale URL, default `http://100.123.231.73:8089`) on configurable dwell times
 3. **cam-viewer.html** is a local HTML wrapper that displays the MJPEG stream with auto-reconnect on disconnect
-4. **Control panel** served on port 8088 — switch views, toggle rotation, adjust durations
+4. **Control panel** served on port 8088 — switch views, toggle rotation, adjust per-view durations, and set Backyard gallery layout and metadata flags (stored in `~/.kiosk-config.json` on the Pi)
 
 ### Control panel
 
 - LAN: http://192.168.86.30:8088
 - Tailscale: http://100.93.242.68:8088
+
+**HTTP API (JSON):** `GET /api/status` (includes `durations`, `backyard_layout`, `backyard_meta`, `backyard_url`), `POST /api/switch` body `{"view":"dakboard"|"camera"|"backyard"}`, `POST /api/rotate`, `POST /api/duration` body `{"view":"...","seconds":30}`, `POST /api/backyard` body `{"layout":"list"|"highlight_recent","meta":["relative","model",...]}`.
 
 ### Kiosk workarounds
 
@@ -93,6 +95,15 @@ systemctl --user daemon-reload && systemctl --user restart kiosk-controller.serv
 | Health check | `http://100.123.231.73:8089/health` |
 | Gallery (Tailscale) | `http://100.123.231.73:8089` |
 | Gallery (on PC only) | `http://localhost:8089` |
+| List detections (JSON) | `GET /api/detections` (optional `?class=bird` etc.) |
+| Delete one detection | `DELETE /api/detections/{id}` (removes folder under `detections/`) |
+
+**Gallery URL query string** (read on load; kiosk uses these when opening Backyard):
+
+- `layout=list` or `layout=highlight_recent` (hero + 3-column strip below)
+- `meta=relative,iso,conf,bbox,model,size` (comma-separated; omit flags you do not want)
+
+Example: `http://100.123.231.73:8089/?layout=highlight_recent&meta=relative,model,size`
 
 **Why Tailscale from the camera Pi:** LAN `192.168.86.28` may **connection refused** from `rpi-cam1` (Wi‑Fi client isolation or routing). Tailscale from `100.66.35.101` → `100.123.231.73` works reliably.
 
