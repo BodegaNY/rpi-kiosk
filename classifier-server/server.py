@@ -240,8 +240,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
 </div>
 <div class="grid" id="grid"></div>
 <div class="empty" id="empty" style="display:none">No detections yet. Watching...</div>
-<div class="overlay" id="overlay" onclick="this.classList.remove('show')">
-  <img id="overlay-img">
+<div class="overlay" id="overlay">
+  <img id="overlay-img" alt="">
 </div>
 <script>
 const LS='backyardGalleryPrefs';
@@ -311,6 +311,18 @@ function show(url){
   document.getElementById('overlay-img').src=url;
   document.getElementById('overlay').classList.add('show');
 }
+(function(){
+  const ov=document.getElementById('overlay');
+  const oimg=document.getElementById('overlay-img');
+  ov.addEventListener('click',function(){ov.classList.remove('show');});
+  oimg.addEventListener('click',function(e){e.stopPropagation();});
+})();
+document.getElementById('grid').addEventListener('click',function(ev){
+  const img=ev.target.closest('img[data-full]');
+  if(!img)return;
+  ev.preventDefault();
+  show(img.getAttribute('data-full'));
+});
 function fmtBytes(n){
   if(n==null)return '';
   if(n<1024)return n+' B';
@@ -346,10 +358,8 @@ function timeLine(d){
 function cardHtml(d){
   const isAnimal=d.animal_detections&&d.animal_detections.length>0;
   const id=JSON.stringify(d.id);
-  const thumb=JSON.stringify(d.thumbnail);
-  const orig=JSON.stringify(d.original_url);
   return '<div class="card" data-id="'+escapeAttr(d.id)+'">'+
-    '<img src='+thumb+' onclick="show('+orig+')" loading="lazy">'+
+    '<img src="'+escapeAttr(d.thumbnail)+'" data-full="'+escapeAttr(d.original_url)+'" loading="lazy" alt="">'+
     '<div class="info">'+
     '<div class="label '+(isAnimal?'animal':'motion')+'">'+escapeHtml(d.label)+'</div>'+
     timeLine(d)+extraMeta(d)+
@@ -389,13 +399,11 @@ async function load(){
     const hero=data[0];
     const rest=data.slice(1);
     const isAnimal=hero.animal_detections&&hero.animal_detections.length>0;
-    const heroOrig=JSON.stringify(hero.original_url);
-    const heroThumb=JSON.stringify(hero.thumbnail);
     const heroId=JSON.stringify(hero.id);
     const heroBlock=
       '<div class="hero-wrap"><div class="hero-label">Most recent</div>'+
       '<div class="card hero">'+
-      '<img src='+heroThumb+' onclick="show('+heroOrig+')" loading="eager">'+
+      '<img src="'+escapeAttr(hero.thumbnail)+'" data-full="'+escapeAttr(hero.original_url)+'" loading="eager" alt="">'+
       '<div class="info">'+
       '<div class="label '+(isAnimal?'animal':'motion')+'">'+escapeHtml(hero.label)+'</div>'+
       timeLine(hero)+extraMeta(hero)+
