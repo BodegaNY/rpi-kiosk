@@ -212,6 +212,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
          align-items:center;justify-content:center;cursor:pointer}
 .overlay.show{display:flex}
 .overlay img{max-width:95vw;max-height:95vh;object-fit:contain}
+.toast{position:fixed;bottom:1.5rem;left:50%;transform:translateX(-50%);background:#2a2a3e;color:#eaeaea;
+       padding:.65rem 1.25rem;border-radius:.5rem;z-index:200;font-size:.9rem;box-shadow:0 4px 24px rgba(0,0,0,.45);
+       border:1px solid #444;display:none}
+.toast.show{display:block}
+.card .actions button.danger:disabled{opacity:.6;cursor:wait}
 </style></head><body>
 <div class="hdr">
   <h1>Backyard Detections</h1>
@@ -243,6 +248,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
 <div class="overlay" id="overlay">
   <img id="overlay-img" alt="">
 </div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
 <script>
 const LS='backyardGalleryPrefs';
 const META_FLAGS=['relative','iso','conf','bbox','model','size'];
@@ -374,12 +380,37 @@ function escapeHtml(s){
 function escapeAttr(s){
   return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;');
 }
+function toastMsg(msg){
+  const t=document.getElementById('toast');
+  t.textContent=msg;
+  t.classList.add('show');
+  clearTimeout(toastMsg._tm);
+  toastMsg._tm=setTimeout(function(){t.classList.remove('show');},2800);
+}
 async function delDet(id,ev){
   ev.stopPropagation();
   if(!confirm('Delete this detection permanently?'))return;
-  const res=await fetch('/api/detections/'+encodeURIComponent(id),{method:'DELETE'});
-  if(!res.ok){alert('Delete failed');return;}
-  load();
+  const btn=ev.currentTarget;
+  const prev=btn.textContent;
+  btn.disabled=true;
+  btn.textContent='Deleting?';
+  try{
+    const res=await fetch('/api/detections/'+encodeURIComponent(id),{method:'DELETE'});
+    if(!res.ok){
+      let detail='';
+      try{const j=await res.json();if(j.error)detail=': '+j.error;}catch(e){}
+      alert('Delete failed (HTTP '+res.status+')'+detail);
+      btn.disabled=false;
+      btn.textContent=prev;
+      return;
+    }
+    await load();
+    toastMsg('Deleted');
+  }catch(err){
+    alert('Delete failed: '+(err&&err.message?err.message:'network error'));
+    btn.disabled=false;
+    btn.textContent=prev;
+  }
 }
 async function load(){
   savePrefs();
