@@ -8,8 +8,11 @@ Raspberry Pi hallway kiosk that rotates between [DAKboard](https://dakboard.com)
 |--------|----------|----------|------|-------------|--------|
 | Camera | Pi Zero W (armv6) | `rpi-cam1` | `pi` | `100.66.35.101` | `192.168.86.33` |
 | Kiosk | Pi 3 B+ (aarch64) | `rpi3b-hallway-kiosk` | `rpi3b` | `100.93.242.68` | `192.168.86.30` |
+| Classifier PC | Windows (RTX 4070) | `jasonbequiet` | — | `100.123.231.73` | `192.168.86.28` |
 
 Both run Pi OS Trixie (Debian trixie) and are connected via Tailscale.
+
+**Motion → classifier:** Use the classifier PC’s **Tailscale** URL (`http://100.123.231.73:8089/...`) from `rpi-cam1`. LAN (`192.168.86.28`) can return *connection refused* from the Pi Zero if Wi‑Fi client isolation or routing differs; Tailscale avoids that.
 
 ## Camera Pi — rpi-cam1
 
@@ -74,6 +77,20 @@ cp /tmp/cam-viewer.html ~/cam-viewer.html
 cp /tmp/kiosk-controller.service ~/.config/systemd/user/kiosk-controller.service
 systemctl --user daemon-reload && systemctl --user restart kiosk-controller.service
 # Or just: sudo reboot
+```
+
+## Motion detection + classifier (rpi-cam1 → Windows)
+
+- **`motion-detect.py`** → `/usr/local/bin/motion-detect.py`, systemd: `motion-detect.service`
+- Config: `/home/pi/.motion-config.json` — set `classifier_url` to `http://100.123.231.73:8089/api/classify` (Tailscale)
+- **`classifier-server/`** on the Windows PC: `python server.py` (port 8089). Gallery: `http://100.123.231.73:8089` or `http://localhost:8089`
+- Windows Firewall: allow inbound TCP 8089 and/or `python3.12.exe` (see project history)
+
+```bash
+# rpi-cam1: point at classifier via Tailscale and restart
+sudo systemctl stop motion-detect.service
+sed -i 's|http://[^"]*8089/api/classify|http://100.123.231.73:8089/api/classify|' /home/pi/.motion-config.json
+sudo systemctl start motion-detect.service
 ```
 
 ## DAKboard login
