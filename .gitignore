@@ -1,0 +1,5 @@
+# Classifier runtime (downloaded / generated)
+classifier-server/yolov8n.pt
+classifier-server/detections/
+**/__pycache__/
+*.pyc

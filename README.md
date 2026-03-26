@@ -82,15 +82,71 @@ systemctl --user daemon-reload && systemctl --user restart kiosk-controller.serv
 ## Motion detection + classifier (rpi-cam1 → Windows)
 
 - **`motion-detect.py`** → `/usr/local/bin/motion-detect.py`, systemd: `motion-detect.service`
-- Config: `/home/pi/.motion-config.json` — set `classifier_url` to `http://100.123.231.73:8089/api/classify` (Tailscale)
-- **`classifier-server/`** on the Windows PC: `python server.py` (port 8089). Gallery: `http://100.123.231.73:8089` or `http://localhost:8089`
-- Windows Firewall: allow inbound TCP 8089 and/or `python3.12.exe` (see project history)
+- Config: `/home/pi/.motion-config.json` — use **`classifier_url`** with the classifier PC’s **Tailscale** host (see below). WoL MAC / broadcast are optional if the PC is usually on.
+- **`classifier-server/`** — FastAPI + YOLOv8 nano on port **8089**. Detections saved under `classifier-server/detections/` (gitignored).
+
+### URLs (jasonbequiet / classifier PC)
+
+| Use | URL |
+|-----|-----|
+| Pi → classify | `http://100.123.231.73:8089/api/classify` |
+| Health check | `http://100.123.231.73:8089/health` |
+| Gallery (Tailscale) | `http://100.123.231.73:8089` |
+| Gallery (on PC only) | `http://localhost:8089` |
+
+**Why Tailscale from the camera Pi:** LAN `192.168.86.28` may **connection refused** from `rpi-cam1` (Wi‑Fi client isolation or routing). Tailscale from `100.66.35.101` → `100.123.231.73` works reliably.
+
+### Run classifier on Windows (this repo)
+
+From the repo’s `classifier-server` folder (or clone the repo to e.g. `C:\data\classifier-server` and `cd` into `classifier-server`):
+
+```powershell
+pip install -r requirements.txt
+python server.py
+```
+
+Leave the process running (or use Task Scheduler). First run downloads `yolov8n.pt` (~6 MB) next to `server.py`.
+
+### Windows Firewall (admin PowerShell)
+
+If other devices cannot reach port 8089, add:
+
+```powershell
+New-NetFirewallRule -DisplayName "Classifier Server TCP 8089" -Direction Inbound -LocalPort 8089 -Protocol TCP -Action Allow -Profile Any
+```
+
+For **Microsoft Store Python**, also allow the real executable (path may change after a Python update — confirm with `Get-Process python3.12 | Select-Object Path` while `server.py` is running):
+
+```powershell
+New-NetFirewallRule -DisplayName "Python 3.12 Classifier" -Direction Inbound -Program "C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.12_3.12.2800.0_x64__qbz5n2kfra8p0\python3.12.exe" -Action Allow -Profile Any
+```
+
+### Deploy motion detector to rpi-cam1
 
 ```bash
-# rpi-cam1: point at classifier via Tailscale and restart
+scp motion-detect.py motion-detect.service pi@100.66.35.101:/tmp/
+ssh pi@100.66.35.101
+sudo apt install -y python3-numpy python3-pil
+sudo cp /tmp/motion-detect.py /usr/local/bin/motion-detect.py && sudo chmod +x /usr/local/bin/motion-detect.py
+sudo cp /tmp/motion-detect.service /etc/systemd/system/motion-detect.service
+mkdir -p ~/motion-captures
+sudo systemctl daemon-reload
+sudo systemctl enable --now motion-detect.service
+```
+
+### Point rpi-cam1 at classifier (Tailscale) and restart
+
+```bash
 sudo systemctl stop motion-detect.service
 sed -i 's|http://[^"]*8089/api/classify|http://100.123.231.73:8089/api/classify|' /home/pi/.motion-config.json
+grep classifier_url /home/pi/.motion-config.json
 sudo systemctl start motion-detect.service
+```
+
+Verify from the Pi:
+
+```bash
+curl -s http://100.123.231.73:8089/health
 ```
 
 ## DAKboard login
