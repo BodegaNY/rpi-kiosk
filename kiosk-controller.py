@@ -102,6 +102,7 @@ PENN_WIDGET = {
     "origin_stop_ids": ("D14N", "D14S"),
     "target_stop_ids": ("A32N", "A32S"),
     "route": "E",
+    "direction": "S",
     "label": "Penn ETA from 7 Av/53 St",
 }
 MTA_SCALE_OPTIONS = ("1.0", "1.2", "1.4", "1.6", "1.8")
@@ -155,6 +156,15 @@ def _epoch_from_stop_time(stop_time):
     return None
 
 
+def _direction_from_stop_id(stop_id):
+    if isinstance(stop_id, str):
+        if stop_id.endswith("N"):
+            return "uptown"
+        if stop_id.endswith("S"):
+            return "downtown"
+    return "unknown"
+
+
 def _fetch_mta_feed(url):
     req = urllib.request.Request(url, headers={"User-Agent": "rpi-kiosk/1.0", "Accept-Encoding": "gzip"})
     with urllib.request.urlopen(req, timeout=10) as resp:
@@ -206,12 +216,14 @@ def _build_mta_payload():
                     "trip_id": trip_id,
                     "route": route,
                     "stop_id": stop_id,
+                    "direction": _direction_from_stop_id(stop_id),
                     "eta_epoch": eta,
                     "minutes": mins,
                 })
                 trip_rows.setdefault(trip_id, []).append({
                     "route": route,
                     "stop_id": stop_id,
+                    "direction": _direction_from_stop_id(stop_id),
                     "eta_epoch": eta,
                 })
 
@@ -243,6 +255,7 @@ def _build_mta_payload():
             "route": e["route"],
             "minutes": e["minutes"],
             "eta_epoch": e["eta_epoch"],
+            "direction": e.get("direction", "unknown"),
             "color": MTA_ROUTE_COLORS.get(e["route"], "#888888"),
         } for e in uniq_events[:10]]
         out_stations.append({
@@ -255,8 +268,9 @@ def _build_mta_payload():
     origin_ids = set(PENN_WIDGET["origin_stop_ids"])
     target_ids = set(PENN_WIDGET["target_stop_ids"])
     route = PENN_WIDGET["route"]
+    direction = PENN_WIDGET.get("direction", "")
     for trip_rows_for_trip in trip_rows.values():
-        r_events = [x for x in trip_rows_for_trip if x["route"] == route]
+        r_events = [x for x in trip_rows_for_trip if x["route"] == route and (not direction or x.get("direction") == ("downtown" if direction == "S" else "uptown"))]
         if not r_events:
             continue
         origins = sorted([x for x in r_events if x["stop_id"] in origin_ids], key=lambda x: x["eta_epoch"])
@@ -716,6 +730,7 @@ h1{font-size:44px;margin-bottom:16px}
 .chip{display:flex;align-items:center;gap:10px;background:#0d1626;border-radius:999px;padding:8px 12px}
 .bullet{width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#111;font-weight:700;font-size:20px}
 .mins{font-size:26px;font-weight:700}
+.dir{font-size:18px;color:#c3d0e8;font-weight:600}
 .penn{margin-bottom:14px;font-size:40px;font-weight:700}
 .muted{color:var(--muted)}
 </style></head><body>
@@ -743,6 +758,8 @@ function render(d){
         const b=el('div','bullet',a.route); b.style.background=(a.color||'#888');
         chip.appendChild(b);
         chip.appendChild(el('div','mins',a.minutes+' min'));
+        const dir=a.direction==='uptown'?'Uptown ↑':(a.direction==='downtown'?'Downtown ↓':'?');
+        chip.appendChild(el('div','dir',dir));
         row.appendChild(chip);
       });
     }
