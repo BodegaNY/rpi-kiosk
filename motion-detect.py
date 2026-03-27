@@ -4,6 +4,7 @@
 import io
 import json
 import os
+import shutil
 import socket
 import struct
 import time
@@ -132,7 +133,10 @@ def cleanup_old_captures():
     try:
         for f in CAPTURE_DIR.iterdir():
             if f.stat().st_mtime < cutoff.timestamp():
-                f.unlink(missing_ok=True)
+                if f.is_dir():
+                    shutil.rmtree(f, ignore_errors=True)
+                else:
+                    f.unlink(missing_ok=True)
     except OSError:
         pass
 
@@ -175,7 +179,9 @@ def detect_motion(prev, curr):
 
 
 def main():
+    global upload_queue
     load_config()
+    upload_queue = deque(maxlen=config["max_queue"])
     save_config()
     CAPTURE_DIR.mkdir(parents=True, exist_ok=True)
 

@@ -2,6 +2,7 @@
 
 import io
 import json
+import os
 import shutil
 import uuid
 from datetime import datetime
@@ -16,8 +17,8 @@ from ultralytics import YOLO
 DETECTIONS_DIR = Path(__file__).parent / "detections"
 DETECTIONS_DIR.mkdir(exist_ok=True)
 
-MODEL_NAME = "yolov8n.pt"
-CONFIDENCE_THRESHOLD = 0.35
+MODEL_NAME = os.getenv("YOLO_MODEL", "yolov8n.pt")
+CONFIDENCE_THRESHOLD = float(os.getenv("CONFIDENCE_THRESHOLD", "0.5"))
 
 ANIMAL_CLASSES = {
     "bird", "cat", "dog", "horse", "sheep", "cow", "elephant", "bear", "zebra", "giraffe",
@@ -158,7 +159,13 @@ async def delete_detection(detection_id: str):
 
 @app.get("/detections/{detection_id}/{filename}")
 async def serve_detection_image(detection_id: str, filename: str):
-    filepath = DETECTIONS_DIR / detection_id / filename
+    if ".." in detection_id or "/" in detection_id or "\\" in detection_id:
+        return JSONResponse({"error": "invalid id"}, status_code=400)
+    if ".." in filename or "/" in filename or "\\" in filename:
+        return JSONResponse({"error": "invalid filename"}, status_code=400)
+    filepath = (DETECTIONS_DIR / detection_id / filename).resolve()
+    if not str(filepath).startswith(str(DETECTIONS_DIR.resolve())):
+        return JSONResponse({"error": "not found"}, status_code=404)
     if not filepath.exists() or not filepath.is_file():
         return JSONResponse({"error": "not found"}, status_code=404)
     return FileResponse(filepath, media_type="image/jpeg")

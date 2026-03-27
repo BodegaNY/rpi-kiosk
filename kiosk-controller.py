@@ -35,6 +35,9 @@ VIEW_ORDER = ["dakboard", "camera", "backyard"]
 
 META_FLAGS = ("relative", "iso", "conf", "bbox", "model", "size")
 
+# Matches classifier gallery filter (?class=); empty = show all types.
+BACKYARD_FILTER_CLASSES = frozenset({"bird", "cat", "dog", "person"})
+
 # RLock: /api/status holds the lock and calls get_view_url -> build_backyard_query (nested lock).
 state_lock = threading.RLock()
 nav_lock = threading.Lock()
@@ -44,10 +47,11 @@ state = {
     "durations": {"dakboard": 30, "camera": 30, "backyard": 30},
     "backyard_layout": "list",
     "backyard_meta": ["relative"],
+    "backyard_filter_class": "",
 }
 
 
-def encode_backyard_query(layout, meta):
+def encode_backyard_query(layout, meta, filter_class=""):
     """URL query for backyard view; meta may be list or comma string (no lock)."""
     if isinstance(meta, str):
         meta = [x.strip() for x in meta.split(",") if x.strip()]
@@ -55,14 +59,19 @@ def encode_backyard_query(layout, meta):
         meta = ["relative"]
     if not meta:
         meta = ["relative"]
-    return urllib.parse.urlencode([("layout", str(layout)), ("meta", ",".join(str(x) for x in meta))])
+    params = [("layout", str(layout)), ("meta", ",".join(str(x) for x in meta))]
+    fc = (filter_class or "").strip().lower()
+    if fc in BACKYARD_FILTER_CLASSES:
+        params.append(("class", fc))
+    return urllib.parse.urlencode(params)
 
 
 def build_backyard_query():
     with state_lock:
         layout = state.get("backyard_layout", "list")
         meta = state.get("backyard_meta", ["relative"])
-    return encode_backyard_query(layout, meta)
+        fc = state.get("backyard_filter_class", "") or ""
+    return encode_backyard_query(layout, meta, fc)
 
 
 def get_view_url(view_key):
@@ -93,6 +102,10 @@ def load_config():
                     bm = [x.strip() for x in bm.split(",") if x.strip()]
                 if isinstance(bm, list):
                     state["backyard_meta"] = [x for x in bm if x in META_FLAGS]
+            if "backyard_filter_class" in saved:
+                bfc = saved["backyard_filter_class"]
+                if isinstance(bfc, str) and (not bfc or bfc in BACKYARD_FILTER_CLASSES):
+                    state["backyard_filter_class"] = bfc
     except (FileNotFoundError, json.JSONDecodeError, ValueError):
         pass
 
@@ -104,6 +117,7 @@ def save_config():
             "durations": dict(state["durations"]),
             "backyard_layout": state.get("backyard_layout", "list"),
             "backyard_meta": list(state.get("backyard_meta", ["relative"])),
+            "backyard_filter_class": state.get("backyard_filter_class", "") or "",
         }
     try:
         with open(CONFIG_PATH, "w") as f:
@@ -225,7 +239,8 @@ h1{text-align:center;font-size:1.3rem;color:var(--ac);margin-bottom:1.5rem}
 .st.dakboard{color:#5dade2} .st.camera{color:#58d68d} .st.backyard{color:#bb8fce}
 .r{display:flex;gap:.6rem;flex-wrap:wrap}
 .b{flex:1;min-width:5rem;padding:.9rem;border:none;border-radius:.5rem;font-size:1rem;
-   font-weight:600;cursor:pointer;background:var(--inp);color:#ccc;transition:.15s}
+   font-weight:600;cursor:pointer;background:var(--inp);color:#ccc;transition:.15s;
+   display:flex;align-items:center;justify-content:center;text-align:center}
 .b:active{transform:scale(.97)} .b.on{background:var(--ac);color:#fff}
 .fb{display:flex;align-items:center;justify-content:space-between}
 .tg{position:relative;width:3.2rem;height:1.75rem;flex-shrink:0}
@@ -299,6 +314,14 @@ h1{text-align:center;font-size:1.3rem;color:var(--ac);margin-bottom:1.5rem}
     <label><input type="checkbox" data-m="model"> Model</label>
     <label><input type="checkbox" data-m="size"> Size</label>
   </div>
+  <div class="meta" id="bf">
+    <span style="width:100%;margin-bottom:.25rem">Show detections</span>
+    <label><input type="checkbox" id="bf-all"> All types</label>
+    <label><input type="checkbox" id="bf-bird" data-fc="bird"> Birds</label>
+    <label><input type="checkbox" id="bf-cat" data-fc="cat"> Cats</label>
+    <label><input type="checkbox" id="bf-dog" data-fc="dog"> Dogs</label>
+    <label><input type="checkbox" id="bf-person" data-fc="person"> People</label>
+  </div>
 </div>
 <p class="mu">rpi3b-hallway-kiosk</p>
 </div>
@@ -321,6 +344,11 @@ function rf(){
     document.querySelectorAll('#bm input[data-m]').forEach(cb=>{
       cb.checked=set.indexOf(cb.dataset.m)>=0;
     });
+    const fc=(d.backyard_filter_class||'').toLowerCase();
+    $('bf-all').checked=!fc;
+    document.querySelectorAll('#bf input[data-fc]').forEach(cb=>{
+      cb.checked=cb.dataset.fc===fc;
+    });
   }).catch(()=>{});
 }
 function handleApi(promise,label){
@@ -340,10 +368,30 @@ function sb(){
   document.querySelectorAll('#bm input[data-m]').forEach(cb=>{
     if(cb.checked)meta.push(cb.dataset.m);
   });
-  handleApi(api('POST','backyard',{layout,meta}),'Backyard');
+  let filter_class='';
+  if($('bf-all').checked)filter_class='';
+  else document.querySelectorAll('#bf input[data-fc]').forEach(cb=>{
+    if(cb.checked)filter_class=cb.dataset.fc;
+  });
+  handleApi(api('POST','backyard',{layout,meta,filter_class}),'Backyard');
+}
+function bfSync(ev){
+  const t=ev.target;
+  if(t.id==='bf-all'&&t.checked){
+    document.querySelectorAll('#bf input[data-fc]').forEach(cb=>{cb.checked=false;});
+  }else if(t.dataset&&t.dataset.fc&&t.checked){
+    $('bf-all').checked=false;
+    document.querySelectorAll('#bf input[data-fc]').forEach(cb=>{
+      if(cb!==t)cb.checked=false;
+    });
+  }
+  sb();
 }
 document.querySelectorAll('#bm input[data-m]').forEach(cb=>{
   cb.addEventListener('change',sb);
+});
+document.querySelectorAll('#bf input').forEach(cb=>{
+  cb.addEventListener('change',bfSync);
 });
 rf(); setInterval(rf,3000);
 </script></body></html>"""
@@ -370,8 +418,11 @@ class ControlHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _body(self):
-        n = int(self.headers.get("Content-Length", 0))
-        return json.loads(self.rfile.read(n)) if n else {}
+        try:
+            n = int(self.headers.get("Content-Length", 0))
+            return json.loads(self.rfile.read(n)) if n else {}
+        except (ValueError, json.JSONDecodeError):
+            return {}
 
     def do_GET(self):
         p = self._path()
@@ -390,6 +441,7 @@ class ControlHandler(BaseHTTPRequestHandler):
                     cv = state["current_view"]
                     layout = state.get("backyard_layout", "list")
                     meta = list(state.get("backyard_meta", ["relative"]))
+                    bfc = state.get("backyard_filter_class", "") or ""
                     d = {
                         "current_view": cv,
                         "current_view_name": VIEWS.get(cv, {}).get("name", cv),
@@ -397,9 +449,10 @@ class ControlHandler(BaseHTTPRequestHandler):
                         "durations": dict(state["durations"]),
                         "backyard_layout": layout,
                         "backyard_meta": meta,
+                        "backyard_filter_class": bfc,
                     }
                 if "backyard" in VIEWS:
-                    d["backyard_url"] = f"{BACKYARD_BASE}/?{encode_backyard_query(layout, meta)}"
+                    d["backyard_url"] = f"{BACKYARD_BASE}/?{encode_backyard_query(layout, meta, bfc)}"
                 else:
                     d["backyard_url"] = ""
                 self._json(d)
@@ -455,9 +508,17 @@ class ControlHandler(BaseHTTPRequestHandler):
             clean = [x for x in meta if x in META_FLAGS]
             if not clean:
                 clean = ["relative"]
+            fc = b.get("filter_class", b.get("class", ""))
+            if not isinstance(fc, str):
+                fc = ""
+            fc = fc.strip().lower()
+            if fc and fc not in BACKYARD_FILTER_CLASSES:
+                self._json({"ok": False, "error": "invalid filter_class"}, 400)
+                return
             with state_lock:
                 state["backyard_layout"] = layout
                 state["backyard_meta"] = clean
+                state["backyard_filter_class"] = fc
             save_config()
             with state_lock:
                 on_backyard = state.get("current_view") == "backyard"
