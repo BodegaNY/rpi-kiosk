@@ -249,11 +249,12 @@ h1{text-align:center;font-size:1.3rem;color:var(--ac);margin-bottom:1.5rem}
   </div>
 </div>
 <div class="c">
-  <div class="lb">Auto-Rotate</div>
+  <div class="lb">Auto-rotate views</div>
   <div class="fb">
-    <span id="rt">Off</span>
-    <label class="tg"><input type="checkbox" id="ro" onchange="tr()"><span class="tk"></span></label>
+    <span id="rt">Disabled</span>
+    <label class="tg" title="When enabled, cycles Dakboard → Camera → Backyard"><input type="checkbox" id="ro" onchange="tr()"><span class="tk"></span></label>
   </div>
+  <p style="font-size:.78rem;color:#666;margin-top:.5rem;line-height:1.35">Toggle right (on) = rotation <strong>enabled</strong>. Left = <strong>disabled</strong> (stay on current view until you press a view button).</p>
   <div class="dr fb">
     <span>Dakboard</span>
     <div><input id="dd" type="number" min="5" max="3600" value="30"
@@ -300,7 +301,7 @@ const $=id=>document.getElementById(id),
 function rf(){
   api('GET','status').then(d=>{
     const v=$('vn'); v.textContent=d.current_view_name; v.className='st '+d.current_view;
-    $('ro').checked=d.rotate; $('rt').textContent=d.rotate?'On':'Off';
+    $('ro').checked=d.rotate; $('rt').textContent=d.rotate?'Enabled':'Disabled';
     $('dd').value=d.durations.dakboard; $('dc').value=d.durations.camera; $('db').value=d.durations.backyard;
     $('bd').className='b'+(d.current_view==='dakboard'?' on':'');
     $('bc').className='b'+(d.current_view==='camera'?' on':'');
