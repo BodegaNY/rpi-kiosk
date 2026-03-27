@@ -3,6 +3,7 @@
 
 import gzip
 import json
+import math
 import sys
 import threading
 import time
@@ -66,6 +67,11 @@ MTA_ROUTE_COLORS = {
     "1": "#EE352E", "2": "#EE352E", "3": "#EE352E",
 }
 MTA_STATIONS = {
+    "7av_53_e": {
+        "name": "7 Av/53 St (E)",
+        "stop_ids": ("D14N", "D14S"),
+        "routes": ("E",),
+    },
     "57_7av": {
         "name": "57 St-7 Av",
         "stop_ids": ("R14N", "R14S"),
@@ -191,7 +197,7 @@ def _build_mta_payload():
                 eta = _epoch_from_stop_time(stu.arrival) or _epoch_from_stop_time(stu.departure)
                 if not eta:
                     continue
-                mins = int((eta - now) / 60)
+                mins = max(0, int(math.ceil((eta - now) / 60.0)))
                 if mins < 0 or mins > MTA_MAX_MINUTES:
                     continue
                 all_events.append({
@@ -221,12 +227,21 @@ def _build_mta_payload():
         stop_ids = set(station["stop_ids"])
         station_events = [e for e in all_events if e["route"] in routes and e["stop_id"] in stop_ids]
         station_events.sort(key=lambda e: e["eta_epoch"])
+        # De-duplicate nearly-identical rows that can appear across direction/platform updates.
+        seen = set()
+        uniq_events = []
+        for e in station_events:
+            k = (e["route"], e["trip_id"], e["eta_epoch"])
+            if k in seen:
+                continue
+            seen.add(k)
+            uniq_events.append(e)
         arrivals = [{
             "route": e["route"],
             "minutes": e["minutes"],
             "eta_epoch": e["eta_epoch"],
             "color": MTA_ROUTE_COLORS.get(e["route"], "#888888"),
-        } for e in station_events[:10]]
+        } for e in uniq_events[:10]]
         out_stations.append({
             "key": station_key,
             "name": station["name"],
