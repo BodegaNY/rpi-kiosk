@@ -81,6 +81,8 @@ systemctl --user daemon-reload && systemctl --user restart kiosk-controller.serv
 # Or just: sudo reboot
 ```
 
+**Control panel (port 8088):** The web UI is part of `kiosk-controller.py` on the Pi — it does **not** update when you change code on Windows. You must **scp** the new script to the Pi and **restart** `kiosk-controller` (or reboot) so button taps actually drive Chromium via CDP. If the page loads but **View** buttons do nothing, redeploy: recent versions fix Chromium’s `/json` list so we attach to a **`page`** target, not the **`browser`** target (which ignores `Page.navigate`).
+
 ## Motion detection + classifier (rpi-cam1 → Windows)
 
 - **`motion-detect.py`** → `/usr/local/bin/motion-detect.py`, systemd: `motion-detect.service`

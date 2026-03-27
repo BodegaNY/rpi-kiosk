@@ -2,7 +2,7 @@
 """Kiosk controller: CDP-based URL rotation with web control panel on port 8088."""
 
 import json
-import os
+import sys
 import threading
 import time
 import urllib.parse
@@ -106,11 +106,22 @@ def save_config():
 
 
 def get_ws_url():
+    """Pick the kiosk *page* WebSocket, not the browser-level target (Chromium lists browser first)."""
     data = urllib.request.urlopen(f"{CDP_BASE}/json", timeout=5).read()
     tabs = json.loads(data)
-    for tab in tabs:
-        if "webSocketDebuggerUrl" in tab:
+    non_browser = [
+        t for t in tabs
+        if t.get("type") != "browser" and "webSocketDebuggerUrl" in t
+    ]
+    pages = [t for t in non_browser if t.get("type") == "page"]
+    for tab in pages:
+        url = tab.get("url") or ""
+        if url.startswith(("http://", "https://", "file://", "about:blank")):
             return tab["webSocketDebuggerUrl"]
+    if pages:
+        return pages[0]["webSocketDebuggerUrl"]
+    if non_browser:
+        return non_browser[0]["webSocketDebuggerUrl"]
     raise RuntimeError("No debuggable tab found")
 
 
@@ -126,16 +137,17 @@ def cdp_navigate(url):
 
 def switch_to(view_key):
     if view_key not in VIEWS:
-        return False
+        return False, "unknown view"
     with nav_lock:
         try:
             url = get_view_url(view_key)
             cdp_navigate(url)
             with state_lock:
                 state["current_view"] = view_key
-            return True
-        except Exception:
-            return False
+            return True, None
+        except Exception as e:
+            print(f"kiosk-controller: CDP navigate failed: {e}", file=sys.stderr)
+            return False, str(e)
 
 
 def rotation_loop():
@@ -148,7 +160,9 @@ def rotation_loop():
 
     with state_lock:
         initial = state["current_view"]
-    switch_to(initial)
+    ok, _err = switch_to(initial)
+    if not ok:
+        print("kiosk-controller: initial switch_to failed", file=sys.stderr)
 
     while True:
         with state_lock:
@@ -174,7 +188,9 @@ def rotation_loop():
                 next_view = VIEW_ORDER[(idx + 1) % len(VIEW_ORDER)]
 
         if should_switch:
-            switch_to(next_view)
+            ok, _err = switch_to(next_view)
+            if not ok:
+                print("kiosk-controller: rotation switch_to failed", file=sys.stderr)
 
 
 # ---------------------------------------------------------------------------
@@ -296,16 +312,24 @@ function rf(){
     });
   }).catch(()=>{});
 }
-function sw(v){api('POST','switch',{view:v}).then(rf)}
-function tr(){api('POST','rotate').then(rf)}
-function sd(v,s){api('POST','duration',{view:v,seconds:parseInt(s)}).then(rf)}
+function handleApi(promise,label){
+  promise.then(d=>{
+    if(d&&d.ok===false){
+      alert((label||'Error')+': '+(d.error||d.detail||'failed'));
+    }
+    rf();
+  }).catch(()=>{alert((label||'Request')+' failed (network)');rf();});
+}
+function sw(v){handleApi(api('POST','switch',{view:v}),'Switch')}
+function tr(){handleApi(api('POST','rotate'),'Rotate')}
+function sd(v,s){handleApi(api('POST','duration',{view:v,seconds:parseInt(s)}),'Duration')}
 function sb(){
   const layout=$('bl').value;
   const meta=[];
   document.querySelectorAll('#bm input[data-m]').forEach(cb=>{
     if(cb.checked)meta.push(cb.dataset.m);
   });
-  api('POST','backyard',{layout,meta}).then(rf);
+  handleApi(api('POST','backyard',{layout,meta}),'Backyard');
 }
 document.querySelectorAll('#bm input[data-m]').forEach(cb=>{
   cb.addEventListener('change',sb);
@@ -362,10 +386,14 @@ class ControlHandler(BaseHTTPRequestHandler):
         if self.path == "/api/switch":
             b = self._body()
             view = b.get("view")
-            if view and switch_to(view):
-                self._json({"ok": True})
+            if not view:
+                self._json({"ok": False, "error": "missing view"}, 400)
             else:
-                self._json({"ok": False, "error": "invalid view or navigate failed"}, 400)
+                ok, err = switch_to(view)
+                if ok:
+                    self._json({"ok": True})
+                else:
+                    self._json({"ok": False, "error": "navigate failed", "detail": err or ""}, 400)
 
         elif self.path == "/api/rotate":
             with state_lock:
@@ -406,7 +434,10 @@ class ControlHandler(BaseHTTPRequestHandler):
             with state_lock:
                 on_backyard = state.get("current_view") == "backyard"
             if on_backyard:
-                switch_to("backyard")
+                ok, err = switch_to("backyard")
+                if not ok:
+                    self._json({"ok": False, "error": "navigate failed", "detail": err or ""}, 400)
+                    return
             self._json({"ok": True})
         else:
             self.send_error(404)
