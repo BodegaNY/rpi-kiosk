@@ -1,6 +1,6 @@
 # RPi Kiosk & Camera System
 
-Raspberry Pi hallway kiosk that rotates between [DAKboard](https://dakboard.com), a live camera feed, and the **Backyard** detection gallery (classifier PC over Tailscale), with a web-based control panel.
+Raspberry Pi hallway kiosk that rotates between [DAKboard](https://dakboard.com), a live camera feed, the **Backyard** detection gallery (classifier PC over Tailscale), and an **NYC MTA arrivals** page, with a web-based control panel.
 
 ## Devices
 
@@ -38,16 +38,16 @@ Both run Pi OS Trixie (Debian trixie) and are connected via Tailscale.
 ### How it works
 
 1. **labwc autostart** waits for network/Tailscale, clears Chromium crash state, launches Chromium in kiosk mode with CDP remote debugging on port 9222
-2. **kiosk-controller.py** (systemd user service) connects to Chromium via CDP WebSocket and rotates between Dakboard, the camera viewer, and the Backyard gallery (Tailscale URL, default `http://100.123.231.73:8089`) on configurable dwell times
+2. **kiosk-controller.py** (systemd user service) connects to Chromium via CDP WebSocket and rotates between Dakboard, the camera viewer, the Backyard gallery (Tailscale URL, default `http://100.123.231.73:8089`), and a local MTA page (`http://127.0.0.1:8088/mta`) on configurable dwell times
 3. **cam-viewer.html** is a local HTML wrapper that displays the MJPEG stream with auto-reconnect on disconnect
-4. **Control panel** served on port 8088 — switch views, toggle rotation, adjust per-view durations, and set Backyard gallery layout and metadata flags (stored in `~/.kiosk-config.json` on the Pi)
+4. **Control panel** served on port 8088 — switch views, toggle rotation, adjust per-view durations, set Backyard gallery layout/metadata/object filters, and configure optional extra MTA station display (stored in `~/.kiosk-config.json` on the Pi)
 
 ### Control panel
 
 - LAN: http://192.168.86.30:8088
 - Tailscale: http://100.93.242.68:8088
 
-**HTTP API (JSON):** `GET /api/status` (includes `durations`, `backyard_layout`, `backyard_meta`, `backyard_url`), `POST /api/switch` body `{"view":"dakboard"|"camera"|"backyard"}`, `POST /api/rotate`, `POST /api/duration` body `{"view":"...","seconds":30}`, `POST /api/backyard` body `{"layout":"list"|"highlight_recent","meta":["relative","model",...]}`.
+**HTTP API (JSON):** `GET /api/status` (includes `durations`, `backyard_layout`, `backyard_meta`, `backyard_url`, `mta_extra_enabled`, `mta_extra_station`), `GET /api/mta-arrivals`, `POST /api/switch` body `{"view":"dakboard"|"camera"|"backyard"|"mta"}`, `POST /api/rotate`, `POST /api/duration` body `{"view":"...","seconds":30}`, `POST /api/backyard` body `{"layout":"list"|"highlight_recent","meta":["relative","model",...],"filter_class":"bird|cat|dog|person|\"\""}`, `POST /api/mta-settings` body `{"enabled":true|false,"station_key":"times_sq_42|34_herald_sq|lex_59|\"\""}`.
 
 ### Kiosk workarounds
 
@@ -73,6 +73,7 @@ scp cam-viewer.html rpi3b@192.168.86.30:/tmp/cam-viewer.html
 scp kiosk-controller.service rpi3b@192.168.86.30:/tmp/kiosk-controller.service
 
 ssh rpi3b@192.168.86.30
+python3 -m pip install --user gtfs-realtime-bindings
 sudo cp /tmp/kiosk-controller.py /usr/local/bin/kiosk-controller.py && sudo chmod +x /usr/local/bin/kiosk-controller.py
 cp /tmp/autostart ~/.config/labwc/autostart
 cp /tmp/cam-viewer.html ~/cam-viewer.html
