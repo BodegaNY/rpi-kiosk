@@ -35,7 +35,8 @@ VIEW_ORDER = ["dakboard", "camera", "backyard"]
 
 META_FLAGS = ("relative", "iso", "conf", "bbox", "model", "size")
 
-state_lock = threading.Lock()
+# RLock: /api/status holds the lock and calls get_view_url -> build_backyard_query (nested lock).
+state_lock = threading.RLock()
 nav_lock = threading.Lock()
 state = {
     "current_view": "dakboard",
