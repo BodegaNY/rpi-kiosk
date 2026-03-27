@@ -16,6 +16,10 @@ try:
     from google.transit import gtfs_realtime_pb2
 except ImportError:
     gtfs_realtime_pb2 = None
+try:
+    from google.protobuf.message import DecodeError
+except Exception:
+    DecodeError = Exception
 
 CONTROL_PORT = 8088
 CDP_BASE = "http://localhost:9222"
@@ -161,9 +165,17 @@ def _build_mta_payload():
     now = int(time.time())
     all_events = []
     trip_rows = {}
+    feed_warnings = []
 
-    for url in MTA_FEEDS.values():
-        feed = _fetch_mta_feed(url)
+    for feed_key, url in MTA_FEEDS.items():
+        try:
+            feed = _fetch_mta_feed(url)
+        except DecodeError as e:
+            feed_warnings.append(f"{feed_key}: decode error: {e}")
+            continue
+        except Exception as e:
+            feed_warnings.append(f"{feed_key}: fetch error: {e}")
+            continue
         for entity in feed.entity:
             if not entity.HasField("trip_update"):
                 continue
@@ -255,7 +267,7 @@ def _build_mta_payload():
         "wait_minutes": min((x["wait_minutes"] for x in best3), default=None),
     }
 
-    return {
+    payload = {
         "ok": True,
         "generated_at": now,
         "stations": out_stations,
@@ -264,6 +276,12 @@ def _build_mta_payload():
         "extra_station_enabled": extra_enabled,
         "extra_station_key": extra_station if extra_enabled else "",
     }
+    if feed_warnings:
+        payload["warnings"] = feed_warnings
+    if not all_events:
+        payload["ok"] = False
+        payload["error"] = "no parseable trip updates from MTA feeds"
+    return payload
 
 
 def get_mta_payload():
