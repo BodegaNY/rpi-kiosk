@@ -104,6 +104,7 @@ PENN_WIDGET = {
     "route": "E",
     "label": "Penn ETA from 7 Av/53 St",
 }
+MTA_SCALE_OPTIONS = ("1.0", "1.2", "1.4", "1.6", "1.8")
 
 # RLock: /api/status holds the lock and calls get_view_url -> build_backyard_query (nested lock).
 state_lock = threading.RLock()
@@ -119,6 +120,7 @@ state = {
     "backyard_filter_class": "",
     "mta_extra_enabled": False,
     "mta_extra_station": "",
+    "mta_scale": "1.4",
 }
 
 
@@ -216,6 +218,7 @@ def _build_mta_payload():
     with state_lock:
         extra_enabled = bool(state.get("mta_extra_enabled", False))
         extra_station = state.get("mta_extra_station", "") or ""
+        mta_scale = state.get("mta_scale", "1.4") or "1.4"
 
     stations = dict(MTA_STATIONS)
     if extra_enabled and extra_station in MTA_EXTRA_STATIONS:
@@ -290,6 +293,7 @@ def _build_mta_payload():
         "penn_eta": penn,
         "extra_station_enabled": extra_enabled,
         "extra_station_key": extra_station if extra_enabled else "",
+        "mta_scale": mta_scale if mta_scale in MTA_SCALE_OPTIONS else "1.4",
     }
     if feed_warnings:
         payload["warnings"] = feed_warnings
@@ -358,6 +362,10 @@ def load_config():
                 key = saved["mta_extra_station"]
                 if isinstance(key, str) and (not key or key in MTA_EXTRA_STATIONS):
                     state["mta_extra_station"] = key
+            if "mta_scale" in saved:
+                s = str(saved["mta_scale"])
+                if s in MTA_SCALE_OPTIONS:
+                    state["mta_scale"] = s
     except (FileNotFoundError, json.JSONDecodeError, ValueError):
         pass
 
@@ -372,6 +380,7 @@ def save_config():
             "backyard_filter_class": state.get("backyard_filter_class", "") or "",
             "mta_extra_enabled": bool(state.get("mta_extra_enabled", False)),
             "mta_extra_station": state.get("mta_extra_station", "") or "",
+            "mta_scale": state.get("mta_scale", "1.4") if state.get("mta_scale", "1.4") in MTA_SCALE_OPTIONS else "1.4",
         }
     try:
         with open(CONFIG_PATH, "w") as f:
@@ -597,6 +606,16 @@ h1{text-align:center;font-size:1.3rem;color:var(--ac);margin-bottom:1.5rem}
       <option value="lex_59">Lexington Av/59 St</option>
     </select>
   </div>
+  <div class="dr">
+    <span style="display:block;margin-bottom:.35rem">Display scale</span>
+    <select id="mz" onchange="sm()">
+      <option value="1.0">100%</option>
+      <option value="1.2">120%</option>
+      <option value="1.4">140%</option>
+      <option value="1.6">160%</option>
+      <option value="1.8">180%</option>
+    </select>
+  </div>
 </div>
 <p class="mu">rpi3b-hallway-kiosk</p>
 </div>
@@ -628,6 +647,7 @@ function rf(){
     $('me').checked=!!d.mta_extra_enabled;
     $('ms').value=d.mta_extra_station||'';
     $('ms').disabled=!$('me').checked;
+    $('mz').value=d.mta_scale||'1.4';
   }).catch(()=>{});
 }
 function handleApi(promise,label){
@@ -669,7 +689,7 @@ function bfSync(ev){
 function sm(){
   const enabled=$('me').checked;
   $('ms').disabled=!enabled;
-  handleApi(api('POST','mta-settings',{enabled:enabled,station_key:$('ms').value||''}),'MTA settings');
+  handleApi(api('POST','mta-settings',{enabled:enabled,station_key:$('ms').value||'',scale:$('mz').value||'1.4'}),'MTA settings');
 }
 document.querySelectorAll('#bm input[data-m]').forEach(cb=>{
   cb.addEventListener('change',sb);
@@ -687,16 +707,16 @@ MTA_HTML = r"""<!DOCTYPE html>
 <style>
 :root{--bg:#0f1117;--card:#1b2333;--txt:#e8edf5;--muted:#a7b3c9}
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--txt);padding:20px}
-h1{font-size:32px;margin-bottom:14px}
-.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
-.card{background:var(--card);border-radius:12px;padding:14px}
-.name{font-size:20px;font-weight:700;margin-bottom:8px}
-.arr{display:flex;flex-wrap:wrap;gap:8px}
-.chip{display:flex;align-items:center;gap:8px;background:#0d1626;border-radius:999px;padding:6px 10px}
-.bullet{width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#111;font-weight:700;font-size:14px}
-.mins{font-size:16px;font-weight:700}
-.penn{margin-bottom:12px;font-size:26px;font-weight:700}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--txt);padding:20px;line-height:1.25}
+h1{font-size:44px;margin-bottom:16px}
+.grid{display:flex;flex-direction:column;gap:14px}
+.card{background:var(--card);border-radius:14px;padding:16px}
+.name{font-size:30px;font-weight:700;margin-bottom:10px}
+.arr{display:flex;flex-wrap:wrap;gap:10px}
+.chip{display:flex;align-items:center;gap:10px;background:#0d1626;border-radius:999px;padding:8px 12px}
+.bullet{width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#111;font-weight:700;font-size:20px}
+.mins{font-size:26px;font-weight:700}
+.penn{margin-bottom:14px;font-size:40px;font-weight:700}
 .muted{color:var(--muted)}
 </style></head><body>
 <h1>NYC Subway Times</h1>
@@ -708,6 +728,7 @@ h1{font-size:32px;margin-bottom:14px}
 <script>
 function el(tag, cls, txt){const n=document.createElement(tag);if(cls)n.className=cls;if(txt!==undefined)n.textContent=txt;return n;}
 function render(d){
+  document.body.style.zoom = d.mta_scale || '1.4';
   const penn=d.penn_eta||{};
   document.getElementById('penn').textContent = penn.available ? ('Penn ETA: '+penn.minutes+' min') : 'Penn ETA: --';
   document.getElementById('upd').textContent='Updated '+new Date((d.generated_at||0)*1000).toLocaleTimeString();
@@ -795,6 +816,7 @@ class ControlHandler(BaseHTTPRequestHandler):
                     bfc = state.get("backyard_filter_class", "") or ""
                     mta_extra_enabled = bool(state.get("mta_extra_enabled", False))
                     mta_extra_station = state.get("mta_extra_station", "") or ""
+                    mta_scale = state.get("mta_scale", "1.4")
                     d = {
                         "current_view": cv,
                         "current_view_name": VIEWS.get(cv, {}).get("name", cv),
@@ -805,6 +827,7 @@ class ControlHandler(BaseHTTPRequestHandler):
                         "backyard_filter_class": bfc,
                         "mta_extra_enabled": mta_extra_enabled,
                         "mta_extra_station": mta_extra_station,
+                        "mta_scale": mta_scale if mta_scale in MTA_SCALE_OPTIONS else "1.4",
                     }
                 if "backyard" in VIEWS:
                     d["backyard_url"] = f"{BACKYARD_BASE}/?{encode_backyard_query(layout, meta, bfc)}"
@@ -887,15 +910,20 @@ class ControlHandler(BaseHTTPRequestHandler):
             b = self._body()
             enabled = bool(b.get("enabled", False))
             station_key = b.get("station_key", "")
+            scale = str(b.get("scale", "1.4"))
             if not isinstance(station_key, str):
                 station_key = ""
             station_key = station_key.strip()
             if station_key and station_key not in MTA_EXTRA_STATIONS:
                 self._json({"ok": False, "error": "invalid station_key"}, 400)
                 return
+            if scale not in MTA_SCALE_OPTIONS:
+                self._json({"ok": False, "error": "invalid scale"}, 400)
+                return
             with state_lock:
                 state["mta_extra_enabled"] = enabled
                 state["mta_extra_station"] = station_key
+                state["mta_scale"] = scale
             save_config()
             with mta_cache_lock:
                 mta_cache["fetched_at"] = 0.0

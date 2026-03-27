@@ -47,7 +47,7 @@ Both run Pi OS Trixie (Debian trixie) and are connected via Tailscale.
 - LAN: http://192.168.86.30:8088
 - Tailscale: http://100.93.242.68:8088
 
-**HTTP API (JSON):** `GET /api/status` (includes `durations`, `backyard_layout`, `backyard_meta`, `backyard_url`, `mta_extra_enabled`, `mta_extra_station`), `GET /api/mta-arrivals`, `POST /api/switch` body `{"view":"dakboard"|"camera"|"backyard"|"mta"}`, `POST /api/rotate`, `POST /api/duration` body `{"view":"...","seconds":30}`, `POST /api/backyard` body `{"layout":"list"|"highlight_recent","meta":["relative","model",...],"filter_class":"bird|cat|dog|person|\"\""}`, `POST /api/mta-settings` body `{"enabled":true|false,"station_key":"times_sq_42|34_herald_sq|lex_59|\"\""}`.
+**HTTP API (JSON):** `GET /api/status` (includes `durations`, `backyard_layout`, `backyard_meta`, `backyard_url`, `mta_extra_enabled`, `mta_extra_station`, `mta_scale`), `GET /api/mta-arrivals`, `POST /api/switch` body `{"view":"dakboard"|"camera"|"backyard"|"mta"}`, `POST /api/rotate`, `POST /api/duration` body `{"view":"...","seconds":30}`, `POST /api/backyard` body `{"layout":"list"|"highlight_recent","meta":["relative","model",...],"filter_class":"bird|cat|dog|person|\"\""}`, `POST /api/mta-settings` body `{"enabled":true|false,"station_key":"times_sq_42|34_herald_sq|lex_59|\"\"","scale":"1.0|1.2|1.4|1.6|1.8"}`.
 
 ### Kiosk workarounds
 
