@@ -51,9 +51,11 @@ def encode_backyard_query(layout, meta):
     """URL query for backyard view; meta may be list or comma string (no lock)."""
     if isinstance(meta, str):
         meta = [x.strip() for x in meta.split(",") if x.strip()]
+    if not isinstance(meta, list):
+        meta = ["relative"]
     if not meta:
         meta = ["relative"]
-    return urllib.parse.urlencode([("layout", layout), ("meta", ",".join(meta))])
+    return urllib.parse.urlencode([("layout", str(layout)), ("meta", ",".join(str(x) for x in meta))])
 
 
 def build_backyard_query():
@@ -134,6 +136,9 @@ def cdp_navigate(url):
     ws_url = get_ws_url()
     ws = websocket.create_connection(ws_url, timeout=10)
     try:
+        sock = getattr(ws, "sock", None)
+        if sock is not None:
+            sock.settimeout(15)
         ws.send(json.dumps({"id": 1, "method": "Page.navigate", "params": {"url": url}}))
         ws.recv()
     finally:
@@ -352,6 +357,10 @@ class ControlHandler(BaseHTTPRequestHandler):
     def log_message(self, *_args):
         pass
 
+    def _path(self):
+        """Path without query string (Chromium may send ?…)."""
+        return self.path.split("?", 1)[0]
+
     def _json(self, data, status=200):
         body = json.dumps(data).encode()
         self.send_response(status)
@@ -365,36 +374,44 @@ class ControlHandler(BaseHTTPRequestHandler):
         return json.loads(self.rfile.read(n)) if n else {}
 
     def do_GET(self):
-        if self.path == "/":
+        p = self._path()
+        if p == "/":
             body = CONTROL_HTML.encode()
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
-        elif self.path == "/api/status":
-            with state_lock:
-                cv = state["current_view"]
-                layout = state.get("backyard_layout", "list")
-                meta = list(state.get("backyard_meta", ["relative"]))
-                d = {
-                    "current_view": cv,
-                    "current_view_name": VIEWS.get(cv, {}).get("name", cv),
-                    "rotate": state["rotate"],
-                    "durations": dict(state["durations"]),
-                    "backyard_layout": layout,
-                    "backyard_meta": meta,
-                }
-            if "backyard" in VIEWS:
-                d["backyard_url"] = f"{BACKYARD_BASE}/?{encode_backyard_query(layout, meta)}"
-            else:
-                d["backyard_url"] = ""
-            self._json(d)
+        elif p == "/api/ping":
+            self._json({"ok": True, "service": "kiosk-controller"})
+        elif p == "/api/status":
+            try:
+                with state_lock:
+                    cv = state["current_view"]
+                    layout = state.get("backyard_layout", "list")
+                    meta = list(state.get("backyard_meta", ["relative"]))
+                    d = {
+                        "current_view": cv,
+                        "current_view_name": VIEWS.get(cv, {}).get("name", cv),
+                        "rotate": state["rotate"],
+                        "durations": dict(state["durations"]),
+                        "backyard_layout": layout,
+                        "backyard_meta": meta,
+                    }
+                if "backyard" in VIEWS:
+                    d["backyard_url"] = f"{BACKYARD_BASE}/?{encode_backyard_query(layout, meta)}"
+                else:
+                    d["backyard_url"] = ""
+                self._json(d)
+            except Exception as e:
+                print(f"kiosk-controller: /api/status error: {e}", file=sys.stderr)
+                self._json({"ok": False, "error": str(e)}, 500)
         else:
             self.send_error(404)
 
     def do_POST(self):
-        if self.path == "/api/switch":
+        p = self._path()
+        if p == "/api/switch":
             b = self._body()
             view = b.get("view")
             if not view:
@@ -406,14 +423,14 @@ class ControlHandler(BaseHTTPRequestHandler):
                 else:
                     self._json({"ok": False, "error": "navigate failed", "detail": err or ""}, 400)
 
-        elif self.path == "/api/rotate":
+        elif p == "/api/rotate":
             with state_lock:
                 state["rotate"] = not state["rotate"]
                 r = state["rotate"]
             save_config()
             self._json({"ok": True, "rotate": r})
 
-        elif self.path == "/api/duration":
+        elif p == "/api/duration":
             b = self._body()
             view = b.get("view")
             seconds = b.get("seconds")
@@ -425,7 +442,7 @@ class ControlHandler(BaseHTTPRequestHandler):
             else:
                 self._json({"ok": False, "error": "invalid view or duration"}, 400)
 
-        elif self.path == "/api/backyard":
+        elif p == "/api/backyard":
             b = self._body()
             layout = b.get("layout")
             meta = b.get("meta")
