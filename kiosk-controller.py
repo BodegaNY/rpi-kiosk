@@ -53,7 +53,7 @@ META_FLAGS = ("relative", "iso", "conf", "bbox", "model", "size")
 BACKYARD_FILTER_CLASSES = frozenset({"bird", "cat", "dog", "person"})
 
 MTA_FEEDS = {
-    "gtfs-1234567": "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-1234567",
+    "gtfs-1234567": "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs",
     "gtfs-ace": "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-ace",
     "gtfs-bdfm": "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-bdfm",
     "gtfs-nqrw": "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-nqrw",
