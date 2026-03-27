@@ -273,6 +273,9 @@ def get_mta_payload():
         payload = _build_mta_payload()
     except (urllib.error.URLError, TimeoutError, OSError, ValueError) as e:
         payload = {"ok": False, "error": str(e)}
+    except Exception as e:
+        # Never let feed parsing/network edge cases crash the request thread.
+        payload = {"ok": False, "error": f"mta feed parse failed: {e.__class__.__name__}: {e}"}
     with mta_cache_lock:
         mta_cache["fetched_at"] = now
         mta_cache["data"] = payload
