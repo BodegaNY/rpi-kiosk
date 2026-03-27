@@ -122,7 +122,47 @@ state = {
     "mta_extra_enabled": False,
     "mta_extra_station": "",
     "mta_scale": "1.4",
+    "classifier_ignore_classes": ["bench"],
 }
+
+
+def parse_ignore_classes_input(raw):
+    """Normalize ignore list from JSON list or comma-separated string."""
+    if isinstance(raw, list):
+        out = []
+        for x in raw:
+            s = str(x).strip().lower()
+            if s:
+                out.append(s)
+        return sorted(set(out))
+    if isinstance(raw, str):
+        parts = [x.strip().lower() for x in raw.split(",") if x.strip()]
+        return sorted(set(parts))
+    return []
+
+
+def push_classifier_settings_to_pc(ignore_list):
+    """Sync ignore list to classifier PC (BACKYARD_BASE). Returns (ok, error_message)."""
+    url = f"{BACKYARD_BASE.rstrip('/')}/api/classifier-settings"
+    data = json.dumps({"ignore_classes": ignore_list}).encode()
+    req = urllib.request.Request(
+        url,
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            resp.read()
+        return True, None
+    except urllib.error.HTTPError as e:
+        try:
+            detail = e.read().decode("utf-8", errors="replace")[:200]
+        except OSError:
+            detail = str(e.code)
+        return False, f"HTTP {e.code}: {detail}"
+    except Exception as e:
+        return False, str(e)
 
 
 def encode_backyard_query(layout, meta, filter_class=""):
@@ -380,6 +420,12 @@ def load_config():
                 s = str(saved["mta_scale"])
                 if s in MTA_SCALE_OPTIONS:
                     state["mta_scale"] = s
+            if "classifier_ignore_classes" in saved:
+                cic = saved["classifier_ignore_classes"]
+                if isinstance(cic, list):
+                    state["classifier_ignore_classes"] = parse_ignore_classes_input(cic)
+                elif isinstance(cic, str):
+                    state["classifier_ignore_classes"] = parse_ignore_classes_input(cic)
     except (FileNotFoundError, json.JSONDecodeError, ValueError):
         pass
 
@@ -395,6 +441,7 @@ def save_config():
             "mta_extra_enabled": bool(state.get("mta_extra_enabled", False)),
             "mta_extra_station": state.get("mta_extra_station", "") or "",
             "mta_scale": state.get("mta_scale", "1.4") if state.get("mta_scale", "1.4") in MTA_SCALE_OPTIONS else "1.4",
+            "classifier_ignore_classes": list(state.get("classifier_ignore_classes", ["bench"])),
         }
     try:
         with open(CONFIG_PATH, "w") as f:
@@ -605,6 +652,12 @@ h1{text-align:center;font-size:1.3rem;color:var(--ac);margin-bottom:1.5rem}
     <label><input type="checkbox" id="bf-dog" data-fc="dog"> Dogs</label>
     <label><input type="checkbox" id="bf-person" data-fc="person"> People</label>
   </div>
+  <div class="dr" style="margin-top:.75rem">
+    <span style="display:block;margin-bottom:.35rem">Ignore classes (no gallery save if only these)</span>
+    <input type="text" id="cig" placeholder="bench, chair" style="width:100%;padding:.5rem;border:1px solid #333;border-radius:.4rem;background:var(--bg);color:#eaeaea;font-size:.9rem">
+    <button type="button" class="b" style="margin-top:.5rem;width:100%" onclick="sci()">Apply to classifier</button>
+    <p style="font-size:.72rem;color:#666;margin-top:.4rem;line-height:1.35">Comma-separated YOLO class names. Motion frames where <strong>every</strong> detection is ignored are not saved on the classifier PC.</p>
+  </div>
 </div>
 <div class="c">
   <div class="lb">MTA options</div>
@@ -658,6 +711,8 @@ function rf(){
     document.querySelectorAll('#bf input[data-fc]').forEach(cb=>{
       cb.checked=cb.dataset.fc===fc;
     });
+    const cic=d.classifier_ignore_classes||[];
+    $('cig').value=Array.isArray(cic)?cic.join(', '):'';
     $('me').checked=!!d.mta_extra_enabled;
     $('ms').value=d.mta_extra_station||'';
     $('ms').disabled=!$('me').checked;
@@ -704,6 +759,16 @@ function sm(){
   const enabled=$('me').checked;
   $('ms').disabled=!enabled;
   handleApi(api('POST','mta-settings',{enabled:enabled,station_key:$('ms').value||'',scale:$('mz').value||'1.4'}),'MTA settings');
+}
+function sci(){
+  api('POST','classifier-ignore',{ignore_classes:$('cig').value||''}).then(d=>{
+    if(d&&d.ok===false){
+      alert('Classifier ignore: '+(d.error||d.detail||'failed'));
+    }else if(d&&d.classifier_sync_ok===false){
+      alert('Saved on kiosk; classifier PC sync failed: '+(d.classifier_sync_error||'unknown')+'\n(Is the classifier running and reachable from the Pi?)');
+    }
+    rf();
+  }).catch(()=>{alert('Classifier ignore failed (network)');rf();});
 }
 document.querySelectorAll('#bm input[data-m]').forEach(cb=>{
   cb.addEventListener('change',sb);
@@ -845,6 +910,9 @@ class ControlHandler(BaseHTTPRequestHandler):
                         "mta_extra_enabled": mta_extra_enabled,
                         "mta_extra_station": mta_extra_station,
                         "mta_scale": mta_scale if mta_scale in MTA_SCALE_OPTIONS else "1.4",
+                        "classifier_ignore_classes": list(
+                            state.get("classifier_ignore_classes", ["bench"])
+                        ),
                     }
                 if "backyard" in VIEWS:
                     d["backyard_url"] = f"{BACKYARD_BASE}/?{encode_backyard_query(layout, meta, bfc)}"
@@ -947,12 +1015,34 @@ class ControlHandler(BaseHTTPRequestHandler):
                 mta_cache["data"] = None
                 mta_cache["error"] = ""
             self._json({"ok": True})
+        elif p == "/api/classifier-ignore":
+            b = self._body()
+            raw = b.get("ignore_classes", [])
+            lst = parse_ignore_classes_input(raw)
+            with state_lock:
+                state["classifier_ignore_classes"] = lst
+            save_config()
+            ok_pc, err_pc = push_classifier_settings_to_pc(lst)
+            self._json({
+                "ok": True,
+                "classifier_ignore_classes": lst,
+                "classifier_sync_ok": ok_pc,
+                "classifier_sync_error": err_pc,
+            })
         else:
             self.send_error(404)
 
 
 def main():
     load_config()
+    with state_lock:
+        _ign = list(state.get("classifier_ignore_classes", ["bench"]))
+    _ok, _err = push_classifier_settings_to_pc(_ign)
+    if not _ok:
+        print(
+            f"kiosk-controller: classifier settings sync failed (PC may be off): {_err}",
+            file=sys.stderr,
+        )
     threading.Thread(target=rotation_loop, daemon=True).start()
     server = ThreadingHTTPServer(("0.0.0.0", CONTROL_PORT), ControlHandler)
     print(f"Kiosk controller on :{CONTROL_PORT}")

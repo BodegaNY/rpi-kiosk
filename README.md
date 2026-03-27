@@ -47,7 +47,7 @@ Both run Pi OS Trixie (Debian trixie) and are connected via Tailscale.
 - LAN: http://192.168.86.30:8088
 - Tailscale: http://100.93.242.68:8088
 
-**HTTP API (JSON):** `GET /api/status` (includes `durations`, `backyard_layout`, `backyard_meta`, `backyard_url`, `mta_extra_enabled`, `mta_extra_station`, `mta_scale`), `GET /api/mta-arrivals`, `POST /api/switch` body `{"view":"dakboard"|"camera"|"backyard"|"mta"}`, `POST /api/rotate`, `POST /api/duration` body `{"view":"...","seconds":30}`, `POST /api/backyard` body `{"layout":"list"|"highlight_recent","meta":["relative","model",...],"filter_class":"bird|cat|dog|person|\"\""}`, `POST /api/mta-settings` body `{"enabled":true|false,"station_key":"times_sq_42|34_herald_sq|lex_59|\"\"","scale":"1.0|1.2|1.4|1.6|1.8"}`.
+**HTTP API (JSON):** `GET /api/status` (includes `durations`, `backyard_layout`, `backyard_meta`, `backyard_url`, `mta_extra_enabled`, `mta_extra_station`, `mta_scale`, `classifier_ignore_classes`), `GET /api/mta-arrivals`, `POST /api/switch` body `{"view":"dakboard"|"camera"|"backyard"|"mta"}`, `POST /api/rotate`, `POST /api/duration` body `{"view":"...","seconds":30}`, `POST /api/backyard` body `{"layout":"list"|"highlight_recent","meta":["relative","model",...],"filter_class":"bird|cat|dog|person|\"\""}`, `POST /api/mta-settings` body `{"enabled":true|false,"station_key":"times_sq_42|34_herald_sq|lex_59|\"\"","scale":"1.0|1.2|1.4|1.6|1.8"}`, `POST /api/classifier-ignore` body `{"ignore_classes":"bench, chair"}` or `["bench","chair"]` (syncs list to classifier PC; response may include `classifier_sync_ok` / `classifier_sync_error` if the PC is unreachable).
 
 ### Kiosk workarounds
 
@@ -102,6 +102,7 @@ systemctl --user daemon-reload && systemctl --user restart kiosk-controller.serv
 | Gallery (on PC only) | `http://localhost:8089` |
 | List detections (JSON) | `GET /api/detections` (optional `?class=bird` etc.) |
 | Delete one detection | `DELETE /api/detections/{id}` (removes folder under `detections/`) |
+| Ignore classes (YOLO names) | `GET/POST /api/classifier-settings` — JSON `{"ignore_classes":["bench"]}`; persisted in `classifier-settings.json` (gitignored). If **every** box on a frame matches the ignore list, `/api/classify` returns `{"saved":false,"ignored_only":true,...}` and does **not** write a detection folder. |
 
 **Gallery URL query string** (read on load; kiosk uses these when opening Backyard):
 

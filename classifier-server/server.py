@@ -8,6 +8,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
+import torch
 import uvicorn
 from fastapi import FastAPI, Request, Query
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
@@ -16,6 +17,7 @@ from ultralytics import YOLO
 
 DETECTIONS_DIR = Path(__file__).parent / "detections"
 DETECTIONS_DIR.mkdir(exist_ok=True)
+CLASSIFIER_SETTINGS_PATH = Path(__file__).parent / "classifier-settings.json"
 
 MODEL_NAME = os.getenv("YOLO_MODEL", "yolov8n.pt")
 CONFIDENCE_THRESHOLD = float(os.getenv("CONFIDENCE_THRESHOLD", "0.5"))
@@ -35,9 +37,57 @@ def get_model():
     return model
 
 
+def read_ignore_classes() -> set:
+    """YOLO class names compared case-insensitively (e.g. bench)."""
+    try:
+        raw = json.loads(CLASSIFIER_SETTINGS_PATH.read_text(encoding="utf-8"))
+        lst = raw.get("ignore_classes", [])
+        if not isinstance(lst, list):
+            return set()
+        return {str(x).strip().lower() for x in lst if str(x).strip()}
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        return set()
+
+
+def write_classifier_settings(ignore_classes: list) -> list:
+    clean = []
+    seen = set()
+    for x in ignore_classes:
+        s = str(x).strip().lower()
+        if s and s not in seen:
+            seen.add(s)
+            clean.append(s)
+    CLASSIFIER_SETTINGS_PATH.write_text(
+        json.dumps({"ignore_classes": clean}, indent=2),
+        encoding="utf-8",
+    )
+    return clean
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/api/classifier-settings")
+async def get_classifier_settings():
+    clean = sorted(read_ignore_classes())
+    return {"ignore_classes": clean}
+
+
+@app.post("/api/classifier-settings")
+async def post_classifier_settings(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid json"}, status_code=400)
+    raw = body.get("ignore_classes", [])
+    if isinstance(raw, str):
+        raw = [x.strip() for x in raw.split(",") if x.strip()]
+    if not isinstance(raw, list):
+        return JSONResponse({"error": "ignore_classes must be a list or comma string"}, status_code=400)
+    clean = write_classifier_settings(raw)
+    return {"ok": True, "ignore_classes": clean}
 
 
 @app.post("/api/classify")
@@ -63,6 +113,24 @@ async def classify(request: Request):
                 "bbox": [round(x1), round(y1), round(x2), round(y2)],
             })
 
+    ignore = read_ignore_classes()
+    filtered = [d for d in detections if d["class"].lower() not in ignore]
+
+    if detections and not filtered:
+        ignored_names = sorted({d["class"] for d in detections})
+        return {
+            "saved": False,
+            "ignored_only": True,
+            "reason": "all detections matched ignore list",
+            "ignored_classes": ignored_names,
+        }
+
+    r0 = results[0]
+    if r0.boxes is not None and len(r0.boxes) and len(filtered) < len(detections):
+        keep = [i for i, d in enumerate(detections) if d["class"].lower() not in ignore]
+        idx = torch.tensor(keep, device=r0.boxes.xyxy.device, dtype=torch.long)
+        r0 = r0[idx]
+
     detection_id = datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:6]
     det_dir = DETECTIONS_DIR / detection_id
     det_dir.mkdir(parents=True, exist_ok=True)
@@ -70,21 +138,21 @@ async def classify(request: Request):
     orig_path = det_dir / "original.jpg"
     orig_path.write_bytes(body)
 
-    annotated = results[0].plot()
+    annotated = r0.plot()
     ann_img = Image.fromarray(annotated[..., ::-1])
     ann_path = det_dir / "annotated.jpg"
     ann_img.save(ann_path, quality=85)
 
-    animal_detections = [d for d in detections if d["class"] in ANIMAL_CLASSES]
+    animal_detections = [d for d in filtered if d["class"] in ANIMAL_CLASSES]
     label = "motion only"
     if animal_detections:
         counts = {}
         for d in animal_detections:
             counts[d["class"]] = counts.get(d["class"], 0) + 1
         label = ", ".join(f"{v} {k}" if v > 1 else k for k, v in sorted(counts.items()))
-    elif detections:
+    elif filtered:
         counts = {}
-        for d in detections:
+        for d in filtered:
             counts[d["class"]] = counts.get(d["class"], 0) + 1
         label = ", ".join(f"{v} {k}" if v > 1 else k for k, v in sorted(counts.items()))
 
@@ -92,8 +160,9 @@ async def classify(request: Request):
         "id": detection_id,
         "timestamp": datetime.now().isoformat(),
         "label": label,
-        "detections": detections,
+        "detections": filtered,
         "animal_detections": animal_detections,
+        "saved": True,
     }
     (det_dir / "meta.json").write_text(json.dumps(meta, indent=2))
 
