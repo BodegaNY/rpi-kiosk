@@ -47,16 +47,20 @@ state = {
 }
 
 
-def build_backyard_query():
-    with state_lock:
-        layout = state.get("backyard_layout", "list")
-        meta = state.get("backyard_meta", ["relative"])
+def encode_backyard_query(layout, meta):
+    """URL query for backyard view; meta may be list or comma string (no lock)."""
     if isinstance(meta, str):
         meta = [x.strip() for x in meta.split(",") if x.strip()]
     if not meta:
         meta = ["relative"]
-    params = [("layout", layout), ("meta", ",".join(meta))]
-    return urllib.parse.urlencode(params)
+    return urllib.parse.urlencode([("layout", layout), ("meta", ",".join(meta))])
+
+
+def build_backyard_query():
+    with state_lock:
+        layout = state.get("backyard_layout", "list")
+        meta = state.get("backyard_meta", ["relative"])
+    return encode_backyard_query(layout, meta)
 
 
 def get_view_url(view_key):
@@ -371,15 +375,20 @@ class ControlHandler(BaseHTTPRequestHandler):
         elif self.path == "/api/status":
             with state_lock:
                 cv = state["current_view"]
+                layout = state.get("backyard_layout", "list")
+                meta = list(state.get("backyard_meta", ["relative"]))
                 d = {
                     "current_view": cv,
                     "current_view_name": VIEWS.get(cv, {}).get("name", cv),
                     "rotate": state["rotate"],
                     "durations": dict(state["durations"]),
-                    "backyard_layout": state.get("backyard_layout", "list"),
-                    "backyard_meta": list(state.get("backyard_meta", ["relative"])),
-                    "backyard_url": get_view_url("backyard") if "backyard" in VIEWS else "",
+                    "backyard_layout": layout,
+                    "backyard_meta": meta,
                 }
+            if "backyard" in VIEWS:
+                d["backyard_url"] = f"{BACKYARD_BASE}/?{encode_backyard_query(layout, meta)}"
+            else:
+                d["backyard_url"] = ""
             self._json(d)
         else:
             self.send_error(404)
