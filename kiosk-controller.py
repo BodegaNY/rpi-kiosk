@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Kiosk controller: CDP-based URL rotation with web control panel on port 8088."""
 
+import gzip
 import json
 import sys
 import threading
@@ -143,9 +144,12 @@ def _epoch_from_stop_time(stop_time):
 
 
 def _fetch_mta_feed(url):
-    req = urllib.request.Request(url, headers={"User-Agent": "rpi-kiosk/1.0"})
+    req = urllib.request.Request(url, headers={"User-Agent": "rpi-kiosk/1.0", "Accept-Encoding": "gzip"})
     with urllib.request.urlopen(req, timeout=10) as resp:
         body = resp.read()
+        enc = (resp.headers.get("Content-Encoding") or "").lower()
+    if enc == "gzip" or body[:2] == b"\x1f\x8b":
+        body = gzip.decompress(body)
     feed = gtfs_realtime_pb2.FeedMessage()
     feed.ParseFromString(body)
     return feed
