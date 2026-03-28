@@ -654,10 +654,9 @@ h1{text-align:center;font-size:1.3rem;color:var(--ac);margin-bottom:1.5rem}
   </div>
   <div class="dr" style="margin-top:.75rem">
     <span style="display:block;margin-bottom:.35rem">Ignore classes (no gallery save if only these)</span>
-    <input type="text" id="cig" placeholder="bench, chair" style="width:100%;padding:.5rem;border:1px solid #333;border-radius:.4rem;background:var(--bg);color:#eaeaea;font-size:.9rem">
+    <input type="text" id="cig" placeholder="bench, potted plant" style="width:100%;padding:.5rem;border:1px solid #333;border-radius:.4rem;background:var(--bg);color:#eaeaea;font-size:.9rem" autocomplete="off" spellcheck="false">
     <button type="button" class="b" style="margin-top:.5rem;width:100%" onclick="sci()">Apply to classifier</button>
-    <p id="cigSt" style="font-size:.75rem;color:#58d68d;margin-top:.4rem;min-height:1.2em"></p>
-    <p style="font-size:.72rem;color:#666;margin-top:.25rem;line-height:1.35">Comma-separated YOLO names (e.g. <code>bench</code>). <strong>Gallery:</strong> hides cards that are only ignored classes; strips them from labels on mixed cards. <strong>New motion:</strong> does not save if every box is ignored. Backyard tab refreshes every ~10s.</p>
+    <p style="font-size:.72rem;color:#666;margin-top:.4rem;line-height:1.35">Comma-separated YOLO class names. Motion frames where <strong>every</strong> detection is ignored are not saved on the classifier PC.</p>
   </div>
 </div>
 <div class="c">
@@ -713,8 +712,9 @@ function rf(){
       cb.checked=cb.dataset.fc===fc;
     });
     const cic=d.classifier_ignore_classes||[];
-    $('cig').value=Array.isArray(cic)?cic.join(', '):'';
-    if($('cigSt'))$('cigSt').textContent='';
+    if(document.activeElement!==$('cig')){
+      $('cig').value=Array.isArray(cic)?cic.join(', '):'';
+    }
     $('me').checked=!!d.mta_extra_enabled;
     $('ms').value=d.mta_extra_station||'';
     $('ms').disabled=!$('me').checked;
@@ -764,18 +764,13 @@ function sm(){
 }
 function sci(){
   api('POST','classifier-ignore',{ignore_classes:$('cig').value||''}).then(d=>{
-    const st=$('cigSt');
     if(d&&d.ok===false){
-      if(st)st.textContent='';
       alert('Classifier ignore: '+(d.error||d.detail||'failed'));
     }else if(d&&d.classifier_sync_ok===false){
-      if(st)st.textContent='Saved on Pi. Classifier sync failed — gallery filter will not update until the PC is reachable.';
       alert('Saved on kiosk; classifier PC sync failed: '+(d.classifier_sync_error||'unknown')+'\n(Is the classifier running and reachable from the Pi?)');
-    }else{
-      if(st)st.textContent='Saved. Switch to Backyard (or wait ~10s) to see the gallery hide '+((d.classifier_ignore_classes||[]).join(', ')||'ignored')+' rows.';
     }
     rf();
-  }).catch(()=>{if($('cigSt'))$('cigSt').textContent='';alert('Classifier ignore failed (network)');rf();});
+  }).catch(()=>{alert('Classifier ignore failed (network)');rf();});
 }
 document.querySelectorAll('#bm input[data-m]').forEach(cb=>{
   cb.addEventListener('change',sb);
