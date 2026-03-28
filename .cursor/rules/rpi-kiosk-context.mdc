@@ -1,0 +1,21 @@
+---
+description: rpi-kiosk repo — kiosk Pi controller, MTA board, classifier PC, motion pipeline, deploy paths
+alwaysApply: false
+---
+
+# rpi-kiosk — context for agents
+
+Read **`AGENTS.md`** at the repo root first; it is the canonical handoff.
+
+**Repo:** `d:\Projects\scripts\rpi-kiosk` (remote: BodegaNY/rpi-kiosk).
+
+**Hot files:**
+- `kiosk-controller.py` — CDP rotation, control panel :8088, MTA feeds/cache/UI, backyard query builder, classifier ignore sync.
+- `classifier-server/server.py` — YOLO classify, gallery, `classifier-settings.json`, ignore list + gallery list filtering.
+- `motion-detect.py` — camera Pi, queue to classifier.
+
+**Do not** run Linux-only commands (`systemctl`, `pkill`) in **Windows PowerShell**; use them only after `ssh` to the Pi.
+
+**Classifier on Windows:** free port 8089 with `taskkill` on the LISTENING PID, then `python .\server.py` from `classifier-server/`.
+
+**Pi MTA:** requires `gtfs-realtime-bindings`; gzip-decode MTA responses before protobuf parse.
