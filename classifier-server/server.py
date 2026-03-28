@@ -64,6 +64,46 @@ def write_classifier_settings(ignore_classes: list) -> list:
     return clean
 
 
+def _label_and_animals_from_detections(detections: list) -> tuple:
+    animal_detections = [d for d in detections if d["class"] in ANIMAL_CLASSES]
+    if animal_detections:
+        counts = {}
+        for d in animal_detections:
+            counts[d["class"]] = counts.get(d["class"], 0) + 1
+        label = ", ".join(
+            f"{v} {k}" if v > 1 else k for k, v in sorted(counts.items())
+        )
+    elif detections:
+        counts = {}
+        for d in detections:
+            counts[d["class"]] = counts.get(d["class"], 0) + 1
+        label = ", ".join(
+            f"{v} {k}" if v > 1 else k for k, v in sorted(counts.items())
+        )
+    else:
+        label = "motion only"
+        animal_detections = []
+    return label, animal_detections
+
+
+def _meta_for_gallery_list(meta: dict, ignore: set):
+    """Strip ignored classes from gallery API. Return None to hide bench-only rows."""
+    full = meta.get("detections") or []
+    if not ignore or not full:
+        return meta
+    visible = [d for d in full if str(d.get("class", "")).lower() not in ignore]
+    if not visible:
+        return None
+    if len(visible) == len(full):
+        return meta
+    out = dict(meta)
+    out["detections"] = visible
+    label, animal_detections = _label_and_animals_from_detections(visible)
+    out["label"] = label
+    out["animal_detections"] = animal_detections
+    return out
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok"}
@@ -193,6 +233,7 @@ async def list_detections(
     entries = []
     if not DETECTIONS_DIR.exists():
         return entries
+    ignore = read_ignore_classes()
     for det_dir in sorted(DETECTIONS_DIR.iterdir(), reverse=True):
         meta_path = det_dir / "meta.json"
         if not meta_path.exists():
@@ -201,8 +242,13 @@ async def list_detections(
             meta = json.loads(meta_path.read_text())
         except (json.JSONDecodeError, OSError):
             continue
+        meta = _meta_for_gallery_list(meta, ignore)
+        if meta is None:
+            continue
         if filter_class:
-            if not any(d["class"] == filter_class for d in meta.get("detections", [])):
+            if not any(
+                d["class"] == filter_class for d in meta.get("detections", [])
+            ):
                 continue
         meta["thumbnail"] = f"/detections/{det_dir.name}/annotated.jpg"
         meta["original_url"] = f"/detections/{det_dir.name}/original.jpg"

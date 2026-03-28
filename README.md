@@ -102,7 +102,7 @@ systemctl --user daemon-reload && systemctl --user restart kiosk-controller.serv
 | Gallery (on PC only) | `http://localhost:8089` |
 | List detections (JSON) | `GET /api/detections` (optional `?class=bird` etc.) |
 | Delete one detection | `DELETE /api/detections/{id}` (removes folder under `detections/`) |
-| Ignore classes (YOLO names) | `GET/POST /api/classifier-settings` — JSON `{"ignore_classes":["bench"]}`; persisted in `classifier-settings.json` (gitignored). If **every** box on a frame matches the ignore list, `/api/classify` returns `{"saved":false,"ignored_only":true,...}` and does **not** write a detection folder. |
+| Ignore classes (YOLO names) | `GET/POST /api/classifier-settings` — JSON `{"ignore_classes":["bench"]}`; persisted in `classifier-settings.json` (gitignored). If **every** box on a frame matches the ignore list, `/api/classify` does **not** write a detection folder. `GET /api/detections` **hides** rows that would be only ignored classes after filtering, and strips ignored classes from labels on mixed rows. |
 
 **Gallery URL query string** (read on load; kiosk uses these when opening Backyard):
 
