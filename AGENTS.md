@@ -17,7 +17,7 @@ Tailscale is used between devices; IPs in code/README are examples — confirm l
 | `dakboard`| External Dakboard URL |
 | `camera`  | `file:///home/rpi3b/cam-viewer.html` |
 | `backyard`| `BACKYARD_BASE` + query (`layout`, `meta`, `class`) |
-| `mta`     | `http://127.0.0.1:8088/mta` — NYC subway board (GTFS-RT on Pi) |
+| `mta`     | `http://127.0.0.1:8088/mta` — NYC subway + LIRR board (GTFS-RT on Pi) |
 
 Config persisted: `~/.kiosk-config.json` on the Pi (durations, rotate, backyard prefs, MTA prefs, **`classifier_ignore_classes`**).
 
@@ -34,6 +34,7 @@ On startup, controller tries to push ignore list to the classifier (stderr warni
 ## MTA implementation (`kiosk-controller.py`)
 
 - Fetches MTA protobuf feeds from `api-endpoint.mta.info` (paths `nyct/gtfs`, `gtfs-ace`, `gtfs-bdfm`, `gtfs-nqrw`); responses may be **gzip** — decompress before parse.
+- **LIRR:** same protobuf `FeedMessage` from `lirr/gtfs-lirr`. JSON field `lirr_stations`: Penn (`237` / `NYK`) and Speonk (`198` / `SPK`); UI shows `trip_headsign` where subway shows uptown/downtown.
 - **Pi dependency:** `gtfs-realtime-bindings` (install with `pip install --user --break-system-packages` on Pi OS if PEP 668 blocks).
 - Cached ~20s; per-feed errors become `warnings` in JSON when other feeds succeed.
 - Direction: **Uptown/Downtown** from stop id suffix `N`/`S`.

@@ -38,7 +38,7 @@ Both run Pi OS Trixie (Debian trixie) and are connected via Tailscale.
 ### How it works
 
 1. **labwc autostart** waits for network/Tailscale, clears Chromium crash state, launches Chromium in kiosk mode with CDP remote debugging on port 9222
-2. **kiosk-controller.py** (systemd user service) connects to Chromium via CDP WebSocket and rotates between Dakboard, the camera viewer, the Backyard gallery (Tailscale URL, default `http://100.123.231.73:8089`), and a local MTA page (`http://127.0.0.1:8088/mta`) on configurable dwell times
+2. **kiosk-controller.py** (systemd user service) connects to Chromium via CDP WebSocket and rotates between Dakboard, the camera viewer, the Backyard gallery (Tailscale URL, default `http://100.123.231.73:8089`), and a local **subway + LIRR** arrivals page (`http://127.0.0.1:8088/mta`) on configurable dwell times. LIRR uses the MTA `gtfs-lirr` feed; Penn and Speonk use stop IDs from static LIRR GTFS (`237`/`NYK`, `198`/`SPK`).
 3. **cam-viewer.html** is a local HTML wrapper that displays the MJPEG stream with auto-reconnect on disconnect
 4. **Control panel** served on port 8088 — switch views, toggle rotation, adjust per-view durations, set Backyard gallery layout/metadata/object filters, and configure optional extra MTA station display (stored in `~/.kiosk-config.json` on the Pi)
 

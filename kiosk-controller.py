@@ -61,6 +61,20 @@ MTA_FEEDS = {
 }
 MTA_CACHE_SECONDS = 20
 MTA_MAX_MINUTES = 90
+# LIRR GTFS-RT (same protobuf FeedMessage as subway; stop_ids from gtfslirr.zip stops.txt).
+LIRR_FEED_URL = "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/lirr%2Fgtfs-lirr"
+LIRR_MAX_MINUTES = 180
+LIRR_DEFAULT_COLOR = "#1B5E7A"
+LIRR_STATIONS = {
+    "lirr_penn": {
+        "name": "Penn Station (LIRR)",
+        "stop_ids": ("237", "NYK"),
+    },
+    "lirr_speonk": {
+        "name": "Speonk",
+        "stop_ids": ("198", "SPK"),
+    },
+}
 MTA_ROUTE_COLORS = {
     "A": "#0039A6", "B": "#FF6319", "C": "#0039A6", "D": "#FF6319", "E": "#0039A6",
     "N": "#FCCC0A", "Q": "#FCCC0A", "R": "#FCCC0A", "W": "#FCCC0A",
@@ -217,6 +231,49 @@ def _fetch_mta_feed(url):
     return feed
 
 
+def _collect_lirr_events(now):
+    """Parse LIRR GTFS-RT into board rows (Penn / Speonk stop_ids from static LIRR GTFS)."""
+    try:
+        feed = _fetch_mta_feed(LIRR_FEED_URL)
+    except DecodeError as e:
+        return [], [f"lirr: decode error: {e}"]
+    except Exception as e:
+        return [], [f"lirr: fetch error: {e}"]
+    events = []
+    for entity in feed.entity:
+        if not entity.HasField("trip_update"):
+            continue
+        tu = entity.trip_update
+        route = (tu.trip.route_id or "").strip()
+        if not route:
+            continue
+        trip_id = tu.trip.trip_id or entity.id or ""
+        headsign = getattr(tu.trip, "trip_headsign", None) or ""
+        if isinstance(headsign, bytes):
+            headsign = headsign.decode("utf-8", "replace")
+        headsign = str(headsign).strip()
+        for stu in tu.stop_time_update:
+            stop_id = (stu.stop_id or "").strip()
+            if not stop_id:
+                continue
+            eta = _epoch_from_stop_time(stu.arrival) or _epoch_from_stop_time(stu.departure)
+            if not eta:
+                continue
+            mins = max(0, int(math.ceil((eta - now) / 60.0)))
+            if mins > LIRR_MAX_MINUTES:
+                continue
+            events.append({
+                "trip_id": trip_id,
+                "route": route[:8],
+                "stop_id": stop_id,
+                "eta_epoch": eta,
+                "minutes": mins,
+                "headsign": headsign[:56] if headsign else "",
+                "lirr": True,
+            })
+    return events, []
+
+
 def _build_mta_payload():
     if gtfs_realtime_pb2 is None:
         return {"ok": False, "error": "missing dependency: gtfs-realtime-bindings"}
@@ -304,6 +361,36 @@ def _build_mta_payload():
             "arrivals": arrivals,
         })
 
+    lirr_raw, lirr_warns = _collect_lirr_events(now)
+    feed_warnings.extend(lirr_warns)
+    out_lirr = []
+    for station_key, station in LIRR_STATIONS.items():
+        stop_ids = set(station["stop_ids"])
+        station_events = [e for e in lirr_raw if e["stop_id"] in stop_ids]
+        station_events.sort(key=lambda e: e["eta_epoch"])
+        seen_l = set()
+        uniq_l = []
+        for e in station_events:
+            k = (e["route"], e["trip_id"], e["eta_epoch"], e["stop_id"])
+            if k in seen_l:
+                continue
+            seen_l.add(k)
+            uniq_l.append(e)
+        lirr_arrivals = [{
+            "route": e["route"],
+            "minutes": e["minutes"],
+            "eta_epoch": e["eta_epoch"],
+            "direction": "unknown",
+            "headsign": e.get("headsign", ""),
+            "lirr": True,
+            "color": LIRR_DEFAULT_COLOR,
+        } for e in uniq_l[:10]]
+        out_lirr.append({
+            "key": station_key,
+            "name": station["name"],
+            "arrivals": lirr_arrivals,
+        })
+
     penn_candidates = []
     origin_ids = set(PENN_WIDGET["origin_stop_ids"])
     target_ids = set(PENN_WIDGET["target_stop_ids"])
@@ -348,12 +435,13 @@ def _build_mta_payload():
         "extra_station_enabled": extra_enabled,
         "extra_station_key": extra_station if extra_enabled else "",
         "mta_scale": mta_scale if mta_scale in MTA_SCALE_OPTIONS else "1.4",
+        "lirr_stations": out_lirr,
     }
     if feed_warnings:
         payload["warnings"] = feed_warnings
-    if not all_events:
+    if not all_events and not lirr_raw:
         payload["ok"] = False
-        payload["error"] = "no parseable trip updates from MTA feeds"
+        payload["error"] = "no parseable trip updates from MTA subway or LIRR feeds"
     return payload
 
 
@@ -797,25 +885,31 @@ h1{font-size:44px;margin-bottom:16px}
 .chip{display:flex;align-items:center;gap:10px;background:#0d1626;border-radius:999px;padding:8px 12px}
 .bullet{width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#111;font-weight:700;font-size:20px}
 .mins{font-size:26px;font-weight:700}
-.dir{font-size:18px;color:#c3d0e8;font-weight:600}
+.dir{font-size:18px;color:#c3d0e8;font-weight:600;max-width:280px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .penn{margin-bottom:14px;font-size:40px;font-weight:700}
 .muted{color:var(--muted)}
+.section{font-size:28px;font-weight:700;margin:20px 0 10px;color:#c3d0e8}
 </style></head><body>
-<h1>NYC Subway Times</h1>
+<h1>NYC Subway &amp; LIRR</h1>
 <div class="card" style="margin-bottom:12px">
   <div class="penn" id="penn">Penn ETA: --</div>
   <div class="muted" id="upd">Loading...</div>
 </div>
 <div class="grid" id="stations"></div>
+<h2 class="section">Long Island Rail Road</h2>
+<div class="grid" id="lirr-stations"></div>
 <script>
 function el(tag, cls, txt){const n=document.createElement(tag);if(cls)n.className=cls;if(txt!==undefined)n.textContent=txt;return n;}
-function render(d){
-  document.body.style.zoom = d.mta_scale || '1.4';
-  const penn=d.penn_eta||{};
-  document.getElementById('penn').textContent = penn.available ? ('Penn ETA: '+penn.minutes+' min') : 'Penn ETA: --';
-  document.getElementById('upd').textContent='Updated '+new Date((d.generated_at||0)*1000).toLocaleTimeString();
-  const root=document.getElementById('stations'); root.innerHTML='';
-  (d.stations||[]).forEach(s=>{
+function dirLabel(a){
+  if(a.lirr){
+    const h=(a.headsign||'').trim();
+    return h?h:'LIRR';
+  }
+  return a.direction==='uptown'?'Uptown ↑':(a.direction==='downtown'?'Downtown ↓':'?');
+}
+function fillStationGrid(root, list){
+  root.innerHTML='';
+  (list||[]).forEach(s=>{
     const card=el('div','card');
     card.appendChild(el('div','name',s.name));
     const row=el('div','arr');
@@ -825,14 +919,23 @@ function render(d){
         const b=el('div','bullet',a.route); b.style.background=(a.color||'#888');
         chip.appendChild(b);
         chip.appendChild(el('div','mins',a.minutes+' min'));
-        const dir=a.direction==='uptown'?'Uptown ↑':(a.direction==='downtown'?'Downtown ↓':'?');
-        chip.appendChild(el('div','dir',dir));
+        chip.appendChild(el('div','dir',dirLabel(a)));
         row.appendChild(chip);
       });
     }
     card.appendChild(row);
     root.appendChild(card);
   });
+}
+function render(d){
+  document.body.style.zoom = d.mta_scale || '1.4';
+  const penn=d.penn_eta||{};
+  document.getElementById('penn').textContent = penn.available ? ('Penn ETA: '+penn.minutes+' min') : 'Penn ETA: --';
+  let upd='Updated '+new Date((d.generated_at||0)*1000).toLocaleTimeString();
+  if(d.warnings&&d.warnings.length) upd+=' · '+d.warnings.length+' feed warning(s)';
+  document.getElementById('upd').textContent=upd;
+  fillStationGrid(document.getElementById('stations'), d.stations);
+  fillStationGrid(document.getElementById('lirr-stations'), d.lirr_stations);
 }
 function tick(){
   fetch('/api/mta-arrivals').then(r=>r.json()).then(d=>{
