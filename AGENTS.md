@@ -34,7 +34,7 @@ On startup, controller tries to push ignore list to the classifier (stderr warni
 ## MTA implementation (`kiosk-controller.py`)
 
 - Fetches MTA protobuf feeds from `api-endpoint.mta.info` (paths `nyct/gtfs`, `gtfs-ace`, `gtfs-bdfm`, `gtfs-nqrw`); responses may be **gzip** — decompress before parse.
-- **LIRR:** same protobuf `FeedMessage` from `lirr/gtfs-lirr`. JSON field `lirr_stations`: Penn (`237` / `NYK`) and Speonk (`198` / `SPK`); UI shows `trip_headsign` where subway shows uptown/downtown.
+- **LIRR:** same protobuf `FeedMessage` from `lirr/gtfs-lirr`. JSON field `lirr_stations`: Penn (`237` / `NYK`) and Speonk (`198` / `SPK`); UI shows `trip_headsign` where subway shows uptown/downtown. **`lirr_penn_to_speonk`:** trips whose stop order is Penn then Speonk; `penn_depart_epoch` / `speonk_arrive_epoch` (prefer departure at Penn, arrival at Speonk).
 - **Pi dependency:** `gtfs-realtime-bindings` (install with `pip install --user --break-system-packages` on Pi OS if PEP 668 blocks).
 - Cached ~20s; per-feed errors become `warnings` in JSON when other feeds succeed.
 - Direction: **Uptown/Downtown** from stop id suffix `N`/`S`.

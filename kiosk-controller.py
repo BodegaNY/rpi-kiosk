@@ -75,6 +75,8 @@ LIRR_STATIONS = {
         "stop_ids": ("198", "SPK"),
     },
 }
+LIRR_PENN_STOP_IDS = frozenset(LIRR_STATIONS["lirr_penn"]["stop_ids"])
+LIRR_SPEONK_STOP_IDS = frozenset(LIRR_STATIONS["lirr_speonk"]["stop_ids"])
 MTA_ROUTE_COLORS = {
     "A": "#0039A6", "B": "#FF6319", "C": "#0039A6", "D": "#FF6319", "E": "#0039A6",
     "N": "#FCCC0A", "Q": "#FCCC0A", "R": "#FCCC0A", "W": "#FCCC0A",
@@ -210,6 +212,15 @@ def _epoch_from_stop_time(stop_time):
     return None
 
 
+def _lirr_stop_sequence(stu, fallback_idx):
+    try:
+        if stu.HasField("stop_sequence"):
+            return int(stu.stop_sequence)
+    except (AttributeError, ValueError):
+        pass
+    return 10_000_000 + fallback_idx
+
+
 def _direction_from_stop_id(stop_id):
     if isinstance(stop_id, str):
         if stop_id.endswith("N"):
@@ -231,15 +242,10 @@ def _fetch_mta_feed(url):
     return feed
 
 
-def _collect_lirr_events(now):
-    """Parse LIRR GTFS-RT into board rows (Penn / Speonk stop_ids from static LIRR GTFS)."""
-    try:
-        feed = _fetch_mta_feed(LIRR_FEED_URL)
-    except DecodeError as e:
-        return [], [f"lirr: decode error: {e}"]
-    except Exception as e:
-        return [], [f"lirr: fetch error: {e}"]
+def _parse_lirr_feed(feed, now):
+    """Single pass: per-stop arrival chips + Penn→Speonk trip legs (Penn before Speonk on trip)."""
     events = []
+    penn_speonk = []
     for entity in feed.entity:
         if not entity.HasField("trip_update"):
             continue
@@ -252,11 +258,18 @@ def _collect_lirr_events(now):
         if isinstance(headsign, bytes):
             headsign = headsign.decode("utf-8", "replace")
         headsign = str(headsign).strip()
-        for stu in tu.stop_time_update:
+        headsign_short = headsign[:56] if headsign else ""
+
+        ordered = []
+        for idx, stu in enumerate(tu.stop_time_update):
             stop_id = (stu.stop_id or "").strip()
             if not stop_id:
                 continue
-            eta = _epoch_from_stop_time(stu.arrival) or _epoch_from_stop_time(stu.departure)
+            seq = _lirr_stop_sequence(stu, idx)
+            arr_t = _epoch_from_stop_time(stu.arrival)
+            dep_t = _epoch_from_stop_time(stu.departure)
+            ordered.append((seq, idx, stop_id, arr_t, dep_t))
+            eta = arr_t or dep_t
             if not eta:
                 continue
             mins = max(0, int(math.ceil((eta - now) / 60.0)))
@@ -268,10 +281,73 @@ def _collect_lirr_events(now):
                 "stop_id": stop_id,
                 "eta_epoch": eta,
                 "minutes": mins,
-                "headsign": headsign[:56] if headsign else "",
+                "headsign": headsign_short,
                 "lirr": True,
             })
-    return events, []
+
+        ordered.sort(key=lambda r: (r[0], r[1]))
+        penn_i = None
+        for i, r in enumerate(ordered):
+            if r[2] in LIRR_PENN_STOP_IDS:
+                penn_i = i
+                break
+        if penn_i is None:
+            continue
+        speonk_row = None
+        for r in ordered[penn_i + 1:]:
+            if r[2] in LIRR_SPEONK_STOP_IDS:
+                speonk_row = r
+                break
+        if not speonk_row:
+            continue
+        _, _, _, penn_arr, penn_dep = ordered[penn_i]
+        _, _, _, sp_arr, sp_dep = speonk_row
+        penn_leave = penn_dep or penn_arr
+        speonk_arrive = sp_arr or sp_dep
+        if not penn_leave or not speonk_arrive or speonk_arrive <= penn_leave:
+            continue
+        if speonk_arrive < now:
+            continue
+        if penn_leave > now + LIRR_MAX_MINUTES * 60:
+            continue
+        if penn_leave < now - 4 * 3600:
+            continue
+        run_minutes = max(0, int((speonk_arrive - penn_leave) / 60))
+        mins_penn = int(math.ceil((penn_leave - now) / 60.0))
+        mins_sp = int(math.ceil((speonk_arrive - now) / 60.0))
+        penn_speonk.append({
+            "trip_id": trip_id,
+            "route": route[:8],
+            "headsign": headsign_short,
+            "penn_depart_epoch": penn_leave,
+            "speonk_arrive_epoch": speonk_arrive,
+            "minutes_until_penn_depart": mins_penn,
+            "minutes_until_speonk_arrival": mins_sp,
+            "run_minutes": run_minutes,
+            "color": LIRR_DEFAULT_COLOR,
+        })
+
+    penn_speonk.sort(key=lambda x: (x["penn_depart_epoch"], x["trip_id"]))
+    seen_ps = set()
+    uniq_ps = []
+    for row in penn_speonk:
+        k = (row["trip_id"], row["penn_depart_epoch"])
+        if k in seen_ps:
+            continue
+        seen_ps.add(k)
+        uniq_ps.append(row)
+    return events, uniq_ps[:20]
+
+
+def _fetch_and_parse_lirr(now):
+    try:
+        feed = _fetch_mta_feed(LIRR_FEED_URL)
+    except DecodeError as e:
+        return [], [], [f"lirr: decode error: {e}"]
+    except Exception as e:
+        return [], [], [f"lirr: fetch error: {e}"]
+    events, penn_speonk = _parse_lirr_feed(feed, now)
+    return events, penn_speonk, []
 
 
 def _build_mta_payload():
@@ -361,7 +437,7 @@ def _build_mta_payload():
             "arrivals": arrivals,
         })
 
-    lirr_raw, lirr_warns = _collect_lirr_events(now)
+    lirr_raw, lirr_penn_speonk, lirr_warns = _fetch_and_parse_lirr(now)
     feed_warnings.extend(lirr_warns)
     out_lirr = []
     for station_key, station in LIRR_STATIONS.items():
@@ -436,10 +512,11 @@ def _build_mta_payload():
         "extra_station_key": extra_station if extra_enabled else "",
         "mta_scale": mta_scale if mta_scale in MTA_SCALE_OPTIONS else "1.4",
         "lirr_stations": out_lirr,
+        "lirr_penn_to_speonk": lirr_penn_speonk,
     }
     if feed_warnings:
         payload["warnings"] = feed_warnings
-    if not all_events and not lirr_raw:
+    if not all_events and not lirr_raw and not lirr_penn_speonk:
         payload["ok"] = False
         payload["error"] = "no parseable trip updates from MTA subway or LIRR feeds"
     return payload
@@ -889,6 +966,16 @@ h1{font-size:44px;margin-bottom:16px}
 .penn{margin-bottom:14px;font-size:40px;font-weight:700}
 .muted{color:var(--muted)}
 .section{font-size:28px;font-weight:700;margin:20px 0 10px;color:#c3d0e8}
+.sub{font-size:18px;color:var(--muted);font-weight:600;margin-bottom:12px}
+.ps-trip{border-top:1px solid #2a3548;padding:14px 0}
+.ps-trip:first-child{border-top:none;padding-top:0}
+.ps-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.ps-leg{display:flex;flex-wrap:wrap;gap:20px;margin-top:10px}
+.ps-cell{min-width:210px}
+.ps-label{font-size:16px;color:var(--muted);margin-bottom:4px}
+.ps-time{font-size:28px;font-weight:700}
+.ps-rel{font-size:18px;color:#c3d0e8;margin-top:2px}
+.ps-run{font-size:16px;color:var(--muted);margin-top:8px}
 </style></head><body>
 <h1>NYC Subway &amp; LIRR</h1>
 <div class="card" style="margin-bottom:12px">
@@ -897,6 +984,11 @@ h1{font-size:44px;margin-bottom:16px}
 </div>
 <div class="grid" id="stations"></div>
 <h2 class="section">Long Island Rail Road</h2>
+<div class="card" id="lirr-penn-speonk-wrap" style="margin-bottom:14px">
+  <div class="name">Trains to Speonk</div>
+  <div class="sub">Penn Station departure → Speonk arrival (same trip)</div>
+  <div id="lirr-penn-speonk"></div>
+</div>
 <div class="grid" id="lirr-stations"></div>
 <script>
 function el(tag, cls, txt){const n=document.createElement(tag);if(cls)n.className=cls;if(txt!==undefined)n.textContent=txt;return n;}
@@ -906,6 +998,53 @@ function dirLabel(a){
     return h?h:'LIRR';
   }
   return a.direction==='uptown'?'Uptown ↑':(a.direction==='downtown'?'Downtown ↓':'?');
+}
+function relMins(m){
+  if(m===undefined||m===null)return '';
+  if(m<0)return 'left '+Math.abs(m)+' min ago';
+  if(m===0)return 'now';
+  return 'in '+m+' min';
+}
+function fmtTime(epoch){
+  if(!epoch)return '--';
+  return new Date(epoch*1000).toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'});
+}
+function runLabel(min){
+  if(min==null||min<1)return '';
+  const h=Math.floor(min/60), m=min%60;
+  if(h>0&&m>0)return '~'+h+' hr '+m+' min on train';
+  if(h>0)return '~'+h+' hr on train';
+  return '~'+m+' min on train';
+}
+function fillPennSpeonk(root, trips){
+  root.innerHTML='';
+  if(!trips||!trips.length){
+    root.appendChild(el('div','muted','No trips in the feed with Penn then Speonk (or Speonk already passed).'));
+    return;
+  }
+  trips.forEach(t=>{
+    const row=el('div','ps-trip');
+    const head=el('div','ps-head');
+    const b=el('div','bullet',t.route||'?'); b.style.background=t.color||'#1B5E7A';
+    head.appendChild(b);
+    const title=(t.headsign&&t.headsign.trim())?t.headsign:'LIRR';
+    head.appendChild(el('div','dir',title));
+    row.appendChild(head);
+    const leg=el('div','ps-leg');
+    const c1=el('div','ps-cell');
+    c1.appendChild(el('div','ps-label','Depart Penn'));
+    c1.appendChild(el('div','ps-time',fmtTime(t.penn_depart_epoch)));
+    c1.appendChild(el('div','ps-rel',relMins(t.minutes_until_penn_depart)));
+    const c2=el('div','ps-cell');
+    c2.appendChild(el('div','ps-label','Arrive Speonk'));
+    c2.appendChild(el('div','ps-time',fmtTime(t.speonk_arrive_epoch)));
+    c2.appendChild(el('div','ps-rel',relMins(t.minutes_until_speonk_arrival)));
+    leg.appendChild(c1); leg.appendChild(c2);
+    row.appendChild(leg);
+    const rl=runLabel(t.run_minutes);
+    if(rl) row.appendChild(el('div','ps-run',rl));
+    root.appendChild(row);
+  });
 }
 function fillStationGrid(root, list){
   root.innerHTML='';
@@ -935,6 +1074,7 @@ function render(d){
   if(d.warnings&&d.warnings.length) upd+=' · '+d.warnings.length+' feed warning(s)';
   document.getElementById('upd').textContent=upd;
   fillStationGrid(document.getElementById('stations'), d.stations);
+  fillPennSpeonk(document.getElementById('lirr-penn-speonk'), d.lirr_penn_to_speonk);
   fillStationGrid(document.getElementById('lirr-stations'), d.lirr_stations);
 }
 function tick(){
