@@ -722,6 +722,26 @@ def _gpio_button_callback(_channel):
         print(f"kiosk-controller: GPIO callback error: {e}", file=sys.stderr)
 
 
+def _gpio_poll_loop(gpio_pin):
+    """Poll pin for HIGH→LOW (press); avoids add_event_detect (often broken on newer Pi OS kernels)."""
+    last = GPIO_HW.input(gpio_pin)
+    debounce_until = 0.0
+    while True:
+        time.sleep(0.02)
+        try:
+            v = GPIO_HW.input(gpio_pin)
+        except Exception:
+            break
+        now = time.time()
+        if now < debounce_until:
+            last = v
+            continue
+        if last == GPIO_HW.HIGH and v == GPIO_HW.LOW:
+            debounce_until = now + 0.35
+            _gpio_button_callback(gpio_pin)
+        last = v
+
+
 def _gpio_cleanup():
     global _gpio_pin_used
     if GPIO_HW is not None and _gpio_pin_used:
@@ -751,17 +771,34 @@ def start_gpio_button_listener():
         GPIO_HW.setwarnings(False)
         GPIO_HW.setmode(GPIO_HW.BCM)
         GPIO_HW.setup(pin, GPIO_HW.IN, pull_up_down=GPIO_HW.PUD_UP)
-        GPIO_HW.add_event_detect(
-            pin,
-            GPIO_HW.FALLING,
-            callback=_gpio_button_callback,
-            bouncetime=300,
-        )
+        try:
+            GPIO_HW.add_event_detect(
+                pin,
+                GPIO_HW.FALLING,
+                callback=_gpio_button_callback,
+                bouncetime=300,
+            )
+            print(
+                f"kiosk-controller: physical next-view button on GPIO BCM {pin} (edge detection; other leg to GND)",
+                file=sys.stderr,
+            )
+        except Exception as edge_err:
+            # Newer Pi OS kernels often fail add_event_detect ("Failed to add edge detection"); poll instead.
+            print(
+                f"kiosk-controller: GPIO edge detection unavailable ({edge_err!r}); using poll fallback",
+                file=sys.stderr,
+            )
+            threading.Thread(
+                target=_gpio_poll_loop,
+                args=(pin,),
+                daemon=True,
+                name="kiosk-gpio-poll",
+            ).start()
+            print(
+                f"kiosk-controller: physical next-view button on GPIO BCM {pin} (poll; other leg to GND)",
+                file=sys.stderr,
+            )
         _gpio_pin_used = pin
-        print(
-            f"kiosk-controller: physical next-view button on GPIO BCM {pin} (connect other leg to GND)",
-            file=sys.stderr,
-        )
         atexit.register(_gpio_cleanup)
     except Exception as e:
         _gpio_init_error = f"{e.__class__.__name__}: {e}"
