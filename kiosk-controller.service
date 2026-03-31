@@ -4,6 +4,8 @@ After=graphical-session.target
 
 [Service]
 Type=simple
+# Optional: physical next-view button — BCM GPIO number (see README). Restarts required after change.
+# Environment=KIOSK_GPIO_BUTTON_BCM=17
 ExecStart=/usr/bin/python3 /usr/local/bin/kiosk-controller.py
 Restart=on-failure
 RestartSec=5

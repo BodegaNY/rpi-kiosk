@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Kiosk controller: CDP-based URL rotation with web control panel on port 8088."""
 
+import atexit
 import gzip
 import json
 import math
+import os
 import sys
 import threading
 import time
@@ -21,6 +23,10 @@ try:
     from google.protobuf.message import DecodeError
 except Exception:
     DecodeError = Exception
+try:
+    import RPi.GPIO as GPIO_HW
+except ImportError:
+    GPIO_HW = None
 
 CONTROL_PORT = 8088
 CDP_BASE = "http://localhost:9222"
@@ -139,7 +145,12 @@ state = {
     "mta_extra_station": "",
     "mta_scale": "1.4",
     "classifier_ignore_classes": ["bench"],
+    # 0 = disabled. Use BCM pin number (e.g. 17). Override: env KIOSK_GPIO_BUTTON_BCM.
+    "gpio_button_bcm": 0,
 }
+
+# Set after successful GPIO setup (for cleanup).
+_gpio_pin_used = None
 
 
 def parse_ignore_classes_input(raw):
@@ -591,6 +602,13 @@ def load_config():
                     state["classifier_ignore_classes"] = parse_ignore_classes_input(cic)
                 elif isinstance(cic, str):
                     state["classifier_ignore_classes"] = parse_ignore_classes_input(cic)
+            if "gpio_button_bcm" in saved:
+                try:
+                    g = int(saved["gpio_button_bcm"])
+                    if 0 <= g <= 27:
+                        state["gpio_button_bcm"] = g
+                except (TypeError, ValueError):
+                    pass
     except (FileNotFoundError, json.JSONDecodeError, ValueError):
         pass
 
@@ -607,6 +625,7 @@ def save_config():
             "mta_extra_station": state.get("mta_extra_station", "") or "",
             "mta_scale": state.get("mta_scale", "1.4") if state.get("mta_scale", "1.4") in MTA_SCALE_OPTIONS else "1.4",
             "classifier_ignore_classes": list(state.get("classifier_ignore_classes", ["bench"])),
+            "gpio_button_bcm": max(0, min(27, int(state.get("gpio_button_bcm", 0) or 0))),
         }
     try:
         with open(CONFIG_PATH, "w") as f:
@@ -661,6 +680,87 @@ def switch_to(view_key):
         except Exception as e:
             print(f"kiosk-controller: CDP navigate failed: {e}", file=sys.stderr)
             return False, str(e)
+
+
+def gpio_effective_pin():
+    """BCM pin for arcade button (0 = off). Env KIOSK_GPIO_BUTTON_BCM overrides config."""
+    ev = os.environ.get("KIOSK_GPIO_BUTTON_BCM")
+    if ev is not None and str(ev).strip() != "":
+        try:
+            g = int(str(ev).strip())
+            return max(0, min(27, g))
+        except ValueError:
+            pass
+    with state_lock:
+        try:
+            g = int(state.get("gpio_button_bcm", 0) or 0)
+        except (TypeError, ValueError):
+            g = 0
+        return max(0, min(27, g))
+
+
+def switch_to_next_view():
+    """Advance to the next view in VIEW_ORDER (same order as auto-rotation)."""
+    with state_lock:
+        current = state.get("current_view", "dakboard")
+    try:
+        idx = VIEW_ORDER.index(current)
+    except ValueError:
+        idx = 0
+    next_view = VIEW_ORDER[(idx + 1) % len(VIEW_ORDER)]
+    return switch_to(next_view)
+
+
+def _gpio_button_callback(_channel):
+    try:
+        ok, err = switch_to_next_view()
+        if not ok:
+            print(f"kiosk-controller: GPIO next-view failed: {err}", file=sys.stderr)
+    except Exception as e:
+        print(f"kiosk-controller: GPIO callback error: {e}", file=sys.stderr)
+
+
+def _gpio_cleanup():
+    global _gpio_pin_used
+    if GPIO_HW is not None and _gpio_pin_used:
+        try:
+            GPIO_HW.cleanup()
+        except Exception:
+            pass
+        _gpio_pin_used = None
+
+
+def start_gpio_button_listener():
+    """Wire arcade button: one side to GND, other to the BCM pin (internal pull-up). Press = LOW."""
+    global _gpio_pin_used
+    pin = gpio_effective_pin()
+    if pin <= 0:
+        return
+    if GPIO_HW is None:
+        print(
+            "kiosk-controller: gpio_button_bcm is set but RPi.GPIO is not installed "
+            "(e.g. pip install --user RPi.GPIO)",
+            file=sys.stderr,
+        )
+        return
+    try:
+        GPIO_HW.setwarnings(False)
+        GPIO_HW.setmode(GPIO_HW.BCM)
+        GPIO_HW.setup(pin, GPIO_HW.IN, pull_up_down=GPIO_HW.PUD_UP)
+        GPIO_HW.add_event_detect(
+            pin,
+            GPIO_HW.FALLING,
+            callback=_gpio_button_callback,
+            bouncetime=300,
+        )
+        _gpio_pin_used = pin
+        print(
+            f"kiosk-controller: physical next-view button on GPIO BCM {pin} (connect other leg to GND)",
+            file=sys.stderr,
+        )
+        atexit.register(_gpio_cleanup)
+    except Exception as e:
+        print(f"kiosk-controller: GPIO init failed: {e}", file=sys.stderr)
 
 
 def rotation_loop():
@@ -1158,6 +1258,9 @@ class ControlHandler(BaseHTTPRequestHandler):
                         "classifier_ignore_classes": list(
                             state.get("classifier_ignore_classes", ["bench"])
                         ),
+                        "gpio_button_bcm": gpio_effective_pin(),
+                        "gpio_module_available": GPIO_HW is not None,
+                        "gpio_listener_active": _gpio_pin_used is not None,
                     }
                 if "backyard" in VIEWS:
                     d["backyard_url"] = f"{BACKYARD_BASE}/?{encode_backyard_query(layout, meta, bfc)}"
@@ -1183,6 +1286,13 @@ class ControlHandler(BaseHTTPRequestHandler):
                     self._json({"ok": True})
                 else:
                     self._json({"ok": False, "error": "navigate failed", "detail": err or ""}, 400)
+
+        elif p == "/api/next":
+            ok, err = switch_to_next_view()
+            if ok:
+                self._json({"ok": True})
+            else:
+                self._json({"ok": False, "error": "navigate failed", "detail": err or ""}, 400)
 
         elif p == "/api/rotate":
             with state_lock:
@@ -1289,6 +1399,7 @@ def main():
             file=sys.stderr,
         )
     threading.Thread(target=rotation_loop, daemon=True).start()
+    start_gpio_button_listener()
     server = ThreadingHTTPServer(("0.0.0.0", CONTROL_PORT), ControlHandler)
     print(f"Kiosk controller on :{CONTROL_PORT}")
     server.serve_forever()

@@ -19,11 +19,13 @@ Tailscale is used between devices; IPs in code/README are examples — confirm l
 | `backyard`| `BACKYARD_BASE` + query (`layout`, `meta`, `class`) |
 | `mta`     | `http://127.0.0.1:8088/mta` — NYC subway + LIRR board (GTFS-RT on Pi) |
 
-Config persisted: `~/.kiosk-config.json` on the Pi (durations, rotate, backyard prefs, MTA prefs, **`classifier_ignore_classes`**).
+Config persisted: `~/.kiosk-config.json` on the Pi (durations, rotate, backyard prefs, MTA prefs, **`classifier_ignore_classes`**, optional **`gpio_button_bcm`**).
+
+**Physical next-view button:** arcade-style momentary switch between a **BCM GPIO** pin and **GND** (internal pull-up; **not** 3.3 V). `gpio_button_bcm` (0–27, 0 = off) or env **`KIOSK_GPIO_BUTTON_BCM`**; requires **`RPi.GPIO`**. Same action as **`POST /api/next`** (advance in `VIEW_ORDER`).
 
 ## Kiosk HTTP API (port 8088)
 
-- `GET /api/status`, `GET /api/ping`, `POST /api/switch`, `POST /api/rotate`, `POST /api/duration`
+- `GET /api/status`, `GET /api/ping`, `POST /api/switch`, `POST /api/next`, `POST /api/rotate`, `POST /api/duration`
 - `POST /api/backyard` — layout, meta flags, `filter_class` (gallery animal filter)
 - `POST /api/mta-settings` — extra station toggle, `scale` (1.0–1.8)
 - `GET /api/mta-arrivals`, `GET /mta`
