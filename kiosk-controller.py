@@ -739,7 +739,7 @@ def start_gpio_button_listener():
     if GPIO_HW is None:
         print(
             "kiosk-controller: gpio_button_bcm is set but RPi.GPIO is not installed "
-            "(e.g. pip install --user RPi.GPIO)",
+            "(e.g. sudo apt install python3-rpi.gpio)",
             file=sys.stderr,
         )
         return

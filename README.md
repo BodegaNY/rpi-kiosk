@@ -41,7 +41,7 @@ Both run Pi OS Trixie (Debian trixie) and are connected via Tailscale.
 2. **kiosk-controller.py** (systemd user service) connects to Chromium via CDP WebSocket and rotates between Dakboard, the camera viewer, the Backyard gallery (Tailscale URL, default `http://100.123.231.73:8089`), and a local **subway + LIRR** arrivals page (`http://127.0.0.1:8088/mta`) on configurable dwell times. LIRR uses the MTA `gtfs-lirr` feed; Penn and Speonk use stop IDs from static LIRR GTFS (`237`/`NYK`, `198`/`SPK`).
 3. **cam-viewer.html** is a local HTML wrapper that displays the MJPEG stream with auto-reconnect on disconnect
 4. **Control panel** served on port 8088 — switch views, toggle rotation, adjust per-view durations, set Backyard gallery layout/metadata/object filters, and configure optional extra MTA station display (stored in `~/.kiosk-config.json` on the Pi)
-5. **Optional physical button** — a momentary switch (e.g. arcade button) wired to a GPIO pin and **GND** advances to the **next view** (same order as auto-rotation: Dakboard → Camera → Backyard → MTA → …). Set `gpio_button_bcm` in `~/.kiosk-config.json` (e.g. `17`) or set environment variable `KIOSK_GPIO_BUTTON_BCM=17` for the systemd service. Requires `RPi.GPIO` (`python3 -m pip install --user RPi.GPIO`). **Wiring:** one Dupont lead from the button to the chosen **BCM** GPIO; the other lead to **GND** (not 3.3 V). The pin uses an internal pull-up, so the button connects the pin to ground when pressed.
+5. **Optional physical button** — a momentary switch (e.g. arcade button) wired to a GPIO pin and **GND** advances to the **next view** (same order as auto-rotation: Dakboard → Camera → Backyard → MTA → …). Set `gpio_button_bcm` in `~/.kiosk-config.json` (e.g. `17`) or set environment variable `KIOSK_GPIO_BUTTON_BCM=17` for the systemd service. Requires `RPi.GPIO` — on Pi OS use the distro package (avoids PEP 668 pip errors): `sudo apt install python3-rpi.gpio`. **Wiring:** one Dupont lead from the button to the chosen **BCM** GPIO; the other lead to **GND** (not 3.3 V). The pin uses an internal pull-up, so the button connects the pin to ground when pressed.
 
 ### Control panel
 
@@ -75,7 +75,7 @@ scp kiosk-controller.service rpi3b@192.168.86.30:/tmp/kiosk-controller.service
 
 ssh rpi3b@192.168.86.30
 python3 -m pip install --user gtfs-realtime-bindings
-python3 -m pip install --user RPi.GPIO
+sudo apt install -y python3-rpi.gpio
 sudo cp /tmp/kiosk-controller.py /usr/local/bin/kiosk-controller.py && sudo chmod +x /usr/local/bin/kiosk-controller.py
 cp /tmp/autostart ~/.config/labwc/autostart
 cp /tmp/cam-viewer.html ~/cam-viewer.html
