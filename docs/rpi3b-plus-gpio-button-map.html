@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pi 3 B+ — GPIO map (kiosk button)</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --card: #161b22;
+      --txt: #e6edf3;
+      --muted: #8b949e;
+      --gnd: #3d4f5c;
+      --pwr33: #c9a227;
+      --pwr5: #e07020;
+      --gpio: #238636;
+      --highlight: #58a6ff;
+      --accent: #f0883e;
+      --danger: #f85149;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--txt);
+      padding: 1.5rem;
+      line-height: 1.45;
+    }
+    h1 { font-size: 1.35rem; font-weight: 700; margin: 0 0 0.5rem; }
+    p.lead { color: var(--muted); margin: 0 0 1.25rem; max-width: 42rem; font-size: 0.95rem; }
+    .wrap { max-width: 52rem; margin: 0 auto; }
+    .board {
+      background: var(--card);
+      border-radius: 12px;
+      padding: 1.25rem;
+      margin-bottom: 1.25rem;
+      border: 1px solid #30363d;
+    }
+    .orient {
+      font-size: 0.85rem;
+      color: var(--accent);
+      margin-bottom: 1rem;
+      padding: 0.65rem 0.85rem;
+      background: rgba(240, 136, 62, 0.08);
+      border-radius: 8px;
+      border-left: 3px solid var(--accent);
+    }
+    .warn {
+      font-size: 0.88rem;
+      color: var(--danger);
+      margin: 0.75rem 0 0;
+      padding: 0.6rem 0.75rem;
+      background: rgba(248, 81, 73, 0.08);
+      border-radius: 8px;
+    }
+    svg { display: block; width: 100%; height: auto; max-width: 440px; margin: 0 auto; }
+    .legend { display: grid; gap: 0.5rem; font-size: 0.88rem; margin-top: 1rem; }
+    .legend span { display: inline-block; width: 12px; height: 12px; border-radius: 2px; vertical-align: middle; margin-right: 0.4rem; }
+    .steps { margin-top: 1.25rem; padding-left: 1.1rem; }
+    .steps li { margin-bottom: 0.5rem; }
+    a { color: var(--highlight); }
+    code { background: #21262d; padding: 0.1rem 0.35rem; border-radius: 4px; font-size: 0.9em; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Raspberry Pi 3 B+ — GPIO header map (kiosk arcade button)</h1>
+    <p class="lead">
+      Default software uses <strong>BCM GPIO 17</strong>, which is <strong>physical pin 11</strong>.
+      Connect the button between that pin and <strong>GND</strong>. Do <strong>not</strong> connect the button to 3.3 V or 5 V.
+    </p>
+
+    <div class="board">
+      <div class="orient">
+        <strong>40-pin header J8</strong> — Hold the Pi so the GPIO row is along the <strong>right edge</strong> of the board
+        (USB ports toward you). <strong>Pin 1</strong> is the corner pin nearest the microSD slot (often a square pad on the PCB).
+        Odd pins are on the <strong>inside</strong> row (toward the board); even pins on the <strong>outside</strong> row.
+      </div>
+
+      <p class="warn">
+        <strong>Never</strong> connect the arcade switch to <strong>pin 1 / 17 (3.3 V)</strong> or <strong>pin 2 / 4 (5 V)</strong> for this project — only GPIO + GND.
+      </p>
+
+      <svg viewBox="0 0 360 540" xmlns="http://www.w3.org/2000/svg" aria-label="GPIO 40-pin map">
+        <defs>
+          <filter id="s" x="-10%" y="-10%" width="120%" height="120%">
+            <feDropShadow dx="0" dy="1" stdDeviation="1.5" flood-opacity="0.35"/>
+          </filter>
+        </defs>
+        <rect x="16" y="16" width="328" height="508" rx="14" fill="#21262d" stroke="#484f58" stroke-width="2"/>
+        <text x="180" y="44" text-anchor="middle" fill="#8b949e" font-size="13" font-family="Segoe UI, sans-serif">GPIO header (top = pin 1 corner by SD card)</text>
+
+        <g id="pins" font-family="Consolas, monospace" font-size="10"></g>
+
+        <g transform="translate(16, 412)">
+          <rect x="0" y="0" width="328" height="96" rx="8" fill="#161b22" stroke="#30363d"/>
+          <text x="164" y="22" text-anchor="middle" fill="#58a6ff" font-size="13" font-weight="700" font-family="Segoe UI, sans-serif">This project — two wires</text>
+          <text x="164" y="44" text-anchor="middle" fill="#e6edf3" font-size="12" font-family="Segoe UI, sans-serif">① Arcade tab → <tspan fill="#58a6ff" font-weight="700">physical pin 11</tspan> (BCM GPIO 17)</text>
+          <text x="164" y="64" text-anchor="middle" fill="#e6edf3" font-size="12" font-family="Segoe UI, sans-serif">② Other tab → <tspan fill="#3d4f5c" font-weight="700">GND</tspan> (e.g. pin 6, 9, 14, 20, 25, 30, 34, 39)</text>
+          <text x="164" y="84" text-anchor="middle" fill="#8b949e" font-size="10" font-family="Segoe UI, sans-serif">Dupont female–female: pin 11 ↔ switch ↔ GND</text>
+        </g>
+      </svg>
+
+      <div class="legend">
+        <div><span style="background:#1f6feb"></span>Default signal pin (<code>gpio_button_bcm=17</code> → physical 11)</div>
+        <div><span style="background:#3d4f5c"></span>GND — safe ground for the button</div>
+        <div><span style="background:#238636"></span>Other GPIO (not used unless you change config)</div>
+        <div><span style="background:#c9a227"></span>3.3 V — <strong>do not</strong> use for the switch</div>
+        <div><span style="background:#e07020"></span>5 V — <strong>do not</strong> use for the switch</div>
+      </div>
+
+      <ol class="steps">
+        <li>Unplug the Pi or turn it off while you change wiring.</li>
+        <li>One Dupont lead: <strong>pin 11</strong> → one tab on the arcade button.</li>
+        <li>Second lead: <strong>GND</strong> (e.g. pin 6) → the other tab.</li>
+        <li>Power on; in software, set <code>gpio_button_bcm</code> to <code>17</code> or <code>KIOSK_GPIO_BUTTON_BCM=17</code>.</li>
+      </ol>
+      <p style="font-size:0.85rem;color:var(--muted);margin-top:1rem;">
+        Full reference: <a href="https://pinout.xyz/">pinout.xyz</a> · Table matches Pi 3 B+ / 40-pin layout (e.g. <a href="https://raspi.muth.org/pins.html">raspi.muth.org/pins</a>).
+      </p>
+    </div>
+  </div>
+
+  <script>
+    // Physical pin 1..40 -> [label, fill, isHighlightGpio17, isGndSuggest]
+    // Pi 3 B+ 40-pin (same as Pi 4 / Zero 2 W header); pin 17 = 3.3V, pin 11 = GPIO17.
+    const PINS = [
+      [1, "3.3V", "#c9a227", false, false],
+      [2, "5V", "#e07020", false, false],
+      [3, "GPIO2", "#238636", false, false],
+      [4, "5V", "#e07020", false, false],
+      [5, "GPIO3", "#238636", false, false],
+      [6, "GND", "#3d4f5c", false, true],
+      [7, "GPIO4", "#238636", false, false],
+      [8, "GPIO14", "#238636", false, false],
+      [9, "GND", "#3d4f5c", false, true],
+      [10, "GPIO15", "#238636", false, false],
+      [11, "GPIO17", "#1f6feb", true, false],
+      [12, "GPIO18", "#238636", false, false],
+      [13, "GPIO27", "#238636", false, false],
+      [14, "GND", "#3d4f5c", false, true],
+      [15, "GPIO22", "#238636", false, false],
+      [16, "GPIO23", "#238636", false, false],
+      [17, "3.3V", "#c9a227", false, false],
+      [18, "GPIO24", "#238636", false, false],
+      [19, "GPIO10", "#238636", false, false],
+      [20, "GND", "#3d4f5c", false, true],
+      [21, "GPIO9", "#238636", false, false],
+      [22, "GPIO25", "#238636", false, false],
+      [23, "GPIO11", "#238636", false, false],
+      [24, "GPIO8", "#238636", false, false],
+      [25, "GND", "#3d4f5c", false, true],
+      [26, "GPIO7", "#238636", false, false],
+      [27, "GPIO0", "#238636", false, false],
+      [28, "GPIO1", "#238636", false, false],
+      [29, "GPIO5", "#238636", false, false],
+      [30, "GND", "#3d4f5c", false, true],
+      [31, "GPIO6", "#238636", false, false],
+      [32, "GPIO12", "#238636", false, false],
+      [33, "GPIO13", "#238636", false, false],
+      [34, "GND", "#3d4f5c", false, true],
+      [35, "GPIO19", "#238636", false, false],
+      [36, "GPIO16", "#238636", false, false],
+      [37, "GPIO26", "#238636", false, false],
+      [38, "GPIO20", "#238636", false, false],
+      [39, "GND", "#3d4f5c", false, true],
+      [40, "GPIO21", "#238636", false, false],
+    ];
+
+    const g = document.getElementById("pins");
+    const rowH = 17;
+    const y0 = 56;
+    const xL = 28, xR = 196;
+    for (let i = 0; i < 20; i++) {
+      const [nL, tL, cL, hL, gndL] = PINS[i * 2];
+      const [nR, tR, cR, hR, gndR] = PINS[i * 2 + 1];
+      const y = y0 + i * rowH;
+      const strokeL = hL ? "#58a6ff" : gndL ? "#79c0ff" : "#484f58";
+      const strokeR = hR ? "#58a6ff" : gndR ? "#79c0ff" : "#484f58";
+      const swL = hL || gndL ? 2.2 : 1;
+      const swR = hR || gndR ? 2.2 : 1;
+
+      const rectL = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+      rectL.setAttribute("x", xL); rectL.setAttribute("y", y - 12); rectL.setAttribute("width", 130); rectL.setAttribute("height", 15);
+      rectL.setAttribute("rx", 3); rectL.setAttribute("fill", cL); rectL.setAttribute("stroke", strokeL); rectL.setAttribute("stroke-width", swL);
+      rectL.setAttribute("filter", "url(#s)");
+      g.appendChild(rectL);
+
+      const rectR = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+      rectR.setAttribute("x", xR); rectR.setAttribute("y", y - 12); rectR.setAttribute("width", 130); rectR.setAttribute("height", 15);
+      rectR.setAttribute("rx", 3); rectR.setAttribute("fill", cR); rectR.setAttribute("stroke", strokeR); rectR.setAttribute("stroke-width", swR);
+      rectR.setAttribute("filter", "url(#s)");
+      g.appendChild(rectR);
+
+      const textL = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      textL.setAttribute("x", xL + 5); textL.setAttribute("y", y - 1);
+      textL.setAttribute("fill", "#f0f6fc"); textL.setAttribute("font-size", "10");
+      textL.textContent = String(nL).padStart(2, " ") + "  " + tL;
+      g.appendChild(textL);
+
+      const textR = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      textR.setAttribute("x", xR + 5); textR.setAttribute("y", y - 1);
+      textR.setAttribute("fill", "#f0f6fc"); textR.setAttribute("font-size", "10");
+      textR.textContent = String(nR).padStart(2, " ") + "  " + tR;
+      g.appendChild(textR);
+    }
+  </script>
+</body>
+</html>
