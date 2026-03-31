@@ -88,6 +88,8 @@ systemctl --user daemon-reload && systemctl --user restart kiosk-controller.serv
 
 **If `curl` to `/api/status` hangs or times out:** Older builds could **deadlock** while handling status (nested lock + `get_view_url` / backyard query). Current `main` avoids that, adds **`GET /api/ping`** (no locks), normalizes paths, and uses **`RLock`** / `encode_backyard_query` as needed. On the Pi after deploy: `curl -sS http://127.0.0.1:8088/api/ping` then `curl -sS http://127.0.0.1:8088/api/status`.
 
+**Physical button / GPIO:** If `gpio_listener_active` is false but `gpio_button_bcm` is set, check `gpio_init_error` in `/api/status` (recent builds) or `journalctl --user -u kiosk-controller.service -b | grep -i gpio`. Common fix: add user to the **`gpio`** group (`sudo usermod -aG gpio rpi3b`), then **log out and back in** or **reboot**, and restart `kiosk-controller`.
+
 ## Motion detection + classifier (rpi-cam1 → Windows)
 
 - **`motion-detect.py`** → `/usr/local/bin/motion-detect.py`, systemd: `motion-detect.service`

@@ -151,6 +151,8 @@ state = {
 
 # Set after successful GPIO setup (for cleanup).
 _gpio_pin_used = None
+# Last GPIO setup error (shown in /api/status when listener did not start).
+_gpio_init_error = None
 
 
 def parse_ignore_classes_input(raw):
@@ -732,11 +734,13 @@ def _gpio_cleanup():
 
 def start_gpio_button_listener():
     """Wire arcade button: one side to GND, other to the BCM pin (internal pull-up). Press = LOW."""
-    global _gpio_pin_used
+    global _gpio_pin_used, _gpio_init_error
+    _gpio_init_error = None
     pin = gpio_effective_pin()
     if pin <= 0:
         return
     if GPIO_HW is None:
+        _gpio_init_error = "RPi.GPIO not installed (apt install python3-rpi.gpio)"
         print(
             "kiosk-controller: gpio_button_bcm is set but RPi.GPIO is not installed "
             "(e.g. sudo apt install python3-rpi.gpio)",
@@ -760,6 +764,7 @@ def start_gpio_button_listener():
         )
         atexit.register(_gpio_cleanup)
     except Exception as e:
+        _gpio_init_error = f"{e.__class__.__name__}: {e}"
         print(f"kiosk-controller: GPIO init failed: {e}", file=sys.stderr)
 
 
@@ -1261,6 +1266,7 @@ class ControlHandler(BaseHTTPRequestHandler):
                         "gpio_button_bcm": gpio_effective_pin(),
                         "gpio_module_available": GPIO_HW is not None,
                         "gpio_listener_active": _gpio_pin_used is not None,
+                        "gpio_init_error": _gpio_init_error,
                     }
                 if "backyard" in VIEWS:
                     d["backyard_url"] = f"{BACKYARD_BASE}/?{encode_backyard_query(layout, meta, bfc)}"
