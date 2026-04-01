@@ -735,6 +735,7 @@ def _gpio_gesture_poll_loop(gpio_pin):
     press_started_at = None
     tap_count = 0
     multi_tap_deadline = None
+    long_fired_this_press = False
 
     while True:
         time.sleep(0.02)
@@ -766,40 +767,54 @@ def _gpio_gesture_poll_loop(gpio_pin):
             last = v
             continue
 
+        # Held past long-press threshold — fire once without waiting for release (avoids release-bounce timing).
+        if (
+            v == GPIO_HW.LOW
+            and press_started_at is not None
+            and not long_fired_this_press
+            and (now - press_started_at) >= GPIO_LONG_PRESS_SEC
+        ):
+            long_fired_this_press = True
+            tap_count = 0
+            multi_tap_deadline = None
+            ok, err = switch_to("dakboard")
+            if ok:
+                print("kiosk-controller: GPIO long press -> Dakboard", file=sys.stderr)
+            else:
+                print(f"kiosk-controller: GPIO Dakboard failed: {err}", file=sys.stderr)
+            last = v
+            continue
+
         # Falling edge — press begins.
         if last == GPIO_HW.HIGH and v == GPIO_HW.LOW:
             press_started_at = now
+            long_fired_this_press = False
             last = v
             continue
 
         # Rising edge — release.
         if last == GPIO_HW.LOW and v == GPIO_HW.HIGH and press_started_at is not None:
-            duration = now - press_started_at
-            press_started_at = None
+            if long_fired_this_press:
+                long_fired_this_press = False
+                press_started_at = None
+                debounce_until = now + GPIO_DEBOUNCE_SEC
+                last = v
+                continue
 
-            if duration >= GPIO_LONG_PRESS_SEC:
+            press_started_at = None
+            tap_count += 1
+            if tap_count >= 3:
                 tap_count = 0
                 multi_tap_deadline = None
-                ok, err = switch_to("dakboard")
-                if ok:
-                    print("kiosk-controller: GPIO long press -> Dakboard", file=sys.stderr)
-                else:
-                    print(f"kiosk-controller: GPIO Dakboard failed: {err}", file=sys.stderr)
+                r = toggle_auto_rotate()
+                print(
+                    f"kiosk-controller: GPIO triple tap -> auto-rotate {'on' if r else 'off'}",
+                    file=sys.stderr,
+                )
                 debounce_until = now + GPIO_DEBOUNCE_SEC
             else:
-                tap_count += 1
-                if tap_count >= 3:
-                    tap_count = 0
-                    multi_tap_deadline = None
-                    r = toggle_auto_rotate()
-                    print(
-                        f"kiosk-controller: GPIO triple tap -> auto-rotate {'on' if r else 'off'}",
-                        file=sys.stderr,
-                    )
-                    debounce_until = now + GPIO_DEBOUNCE_SEC
-                else:
-                    multi_tap_deadline = now + GPIO_MULTI_TAP_GAP_SEC
-                    debounce_until = now + 0.05
+                multi_tap_deadline = now + GPIO_MULTI_TAP_GAP_SEC
+                debounce_until = now + 0.05
 
             last = v
             continue

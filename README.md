@@ -88,7 +88,7 @@ systemctl --user daemon-reload && systemctl --user restart kiosk-controller.serv
 
 **If `curl` to `/api/status` hangs or times out:** Older builds could **deadlock** while handling status (nested lock + `get_view_url` / backyard query). Current `main` avoids that, adds **`GET /api/ping`** (no locks), normalizes paths, and uses **`RLock`** / `encode_backyard_query` as needed. On the Pi after deploy: `curl -sS http://127.0.0.1:8088/api/ping` then `curl -sS http://127.0.0.1:8088/api/status`.
 
-**Physical button / GPIO:** If `gpio_listener_active` is false but `gpio_button_bcm` is set, check `gpio_init_error` in `/api/status` (recent builds) or `journalctl --user -u kiosk-controller.service -b | grep -i gpio`. Common fix: add user to the **`gpio`** group (`sudo usermod -aG gpio rpi3b`), then **log out and back in** or **reboot**, and restart `kiosk-controller`. If logs show **`Failed to add edge detection`**, use a current `kiosk-controller.py` — it falls back to a **polling** thread when kernel edge detection fails (common on newer Pi OS).
+**Physical button / GPIO:** If `gpio_listener_active` is false but `gpio_button_bcm` is set, check `gpio_init_error` in `/api/status` (recent builds) or `journalctl --user -u kiosk-controller.service -b | grep -i gpio`. Common fix: add user to the **`gpio`** group (`sudo usermod -aG gpio rpi3b`), then **log out and back in** or **reboot**, and restart `kiosk-controller`. After deploy, confirm the new gesture code is installed: `grep -n 'short tap(s)=next view' /usr/local/bin/kiosk-controller.py` — if no match, the Pi still has an older script (gestures need the current file).
 
 ## Motion detection + classifier (rpi-cam1 → Windows)
 
