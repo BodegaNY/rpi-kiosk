@@ -21,7 +21,7 @@ Tailscale is used between devices; IPs in code/README are examples — confirm l
 
 Config persisted: `~/.kiosk-config.json` on the Pi (durations, rotate, backyard prefs, MTA prefs, **`classifier_ignore_classes`**, optional **`gpio_button_bcm`**).
 
-**Physical next-view button:** arcade-style momentary switch between a **BCM GPIO** pin and **GND** (internal pull-up; **not** 3.3 V). `gpio_button_bcm` (0–27, 0 = off) or env **`KIOSK_GPIO_BUTTON_BCM`**; requires **`RPi.GPIO`** (`sudo apt install python3-rpi.gpio` on Pi OS — prefer apt over `pip` here; PEP 668). Same action as **`POST /api/next`** (advance in `VIEW_ORDER`).
+**Physical button (GPIO):** momentary switch **BCM GPIO** + **GND** (pull-up; **not** 3.3 V). `gpio_button_bcm` or **`KIOSK_GPIO_BUTTON_BCM`**; **`RPi.GPIO`** via `apt install python3-rpi.gpio`. Gestures (poll loop): **short tap(s)** → next view (1–2 taps after gap fire once/twice); **hold ~1 s** → Dakboard; **3 taps** → toggle auto-rotate. **`POST /api/next`** = one short tap only.
 
 ## Kiosk HTTP API (port 8088)
 

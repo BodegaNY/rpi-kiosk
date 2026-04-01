@@ -32,6 +32,11 @@ CONTROL_PORT = 8088
 CDP_BASE = "http://localhost:9222"
 CONFIG_PATH = "/home/rpi3b/.kiosk-config.json"
 
+# Physical button gestures (GPIO poll loop; BCM + GND, pull-up).
+GPIO_LONG_PRESS_SEC = 1.0
+GPIO_MULTI_TAP_GAP_SEC = 0.45
+GPIO_DEBOUNCE_SEC = 0.35
+
 BACKYARD_BASE = "http://100.123.231.73:8089"
 
 VIEWS = {
@@ -713,19 +718,24 @@ def switch_to_next_view():
     return switch_to(next_view)
 
 
-def _gpio_button_callback(_channel):
-    try:
-        ok, err = switch_to_next_view()
-        if not ok:
-            print(f"kiosk-controller: GPIO next-view failed: {err}", file=sys.stderr)
-    except Exception as e:
-        print(f"kiosk-controller: GPIO callback error: {e}", file=sys.stderr)
+def toggle_auto_rotate():
+    """Toggle auto-rotation; persist like the control panel."""
+    with state_lock:
+        state["rotate"] = not state["rotate"]
+    save_config()
+    with state_lock:
+        r = state["rotate"]
+    return r
 
 
-def _gpio_poll_loop(gpio_pin):
-    """Poll pin for HIGH→LOW (press); avoids add_event_detect (often broken on newer Pi OS kernels)."""
+def _gpio_gesture_poll_loop(gpio_pin):
+    """Long hold → Dakboard; 3 quick taps → toggle auto-rotate; 1–2 taps after gap → next view (× tap count)."""
     last = GPIO_HW.input(gpio_pin)
     debounce_until = 0.0
+    press_started_at = None
+    tap_count = 0
+    multi_tap_deadline = None
+
     while True:
         time.sleep(0.02)
         try:
@@ -733,12 +743,67 @@ def _gpio_poll_loop(gpio_pin):
         except Exception:
             break
         now = time.time()
+
         if now < debounce_until:
             last = v
             continue
+
+        # Released: commit incomplete tap sequence after quiet window.
+        if (
+            multi_tap_deadline is not None
+            and now >= multi_tap_deadline
+            and press_started_at is None
+            and v == GPIO_HW.HIGH
+            and tap_count > 0
+        ):
+            for _ in range(tap_count):
+                ok, err = switch_to_next_view()
+                if not ok:
+                    print(f"kiosk-controller: GPIO next-view failed: {err}", file=sys.stderr)
+            tap_count = 0
+            multi_tap_deadline = None
+            debounce_until = now + GPIO_DEBOUNCE_SEC
+            last = v
+            continue
+
+        # Falling edge — press begins.
         if last == GPIO_HW.HIGH and v == GPIO_HW.LOW:
-            debounce_until = now + 0.35
-            _gpio_button_callback(gpio_pin)
+            press_started_at = now
+            last = v
+            continue
+
+        # Rising edge — release.
+        if last == GPIO_HW.LOW and v == GPIO_HW.HIGH and press_started_at is not None:
+            duration = now - press_started_at
+            press_started_at = None
+
+            if duration >= GPIO_LONG_PRESS_SEC:
+                tap_count = 0
+                multi_tap_deadline = None
+                ok, err = switch_to("dakboard")
+                if ok:
+                    print("kiosk-controller: GPIO long press -> Dakboard", file=sys.stderr)
+                else:
+                    print(f"kiosk-controller: GPIO Dakboard failed: {err}", file=sys.stderr)
+                debounce_until = now + GPIO_DEBOUNCE_SEC
+            else:
+                tap_count += 1
+                if tap_count >= 3:
+                    tap_count = 0
+                    multi_tap_deadline = None
+                    r = toggle_auto_rotate()
+                    print(
+                        f"kiosk-controller: GPIO triple tap -> auto-rotate {'on' if r else 'off'}",
+                        file=sys.stderr,
+                    )
+                    debounce_until = now + GPIO_DEBOUNCE_SEC
+                else:
+                    multi_tap_deadline = now + GPIO_MULTI_TAP_GAP_SEC
+                    debounce_until = now + 0.05
+
+            last = v
+            continue
+
         last = v
 
 
@@ -771,33 +836,18 @@ def start_gpio_button_listener():
         GPIO_HW.setwarnings(False)
         GPIO_HW.setmode(GPIO_HW.BCM)
         GPIO_HW.setup(pin, GPIO_HW.IN, pull_up_down=GPIO_HW.PUD_UP)
-        try:
-            GPIO_HW.add_event_detect(
-                pin,
-                GPIO_HW.FALLING,
-                callback=_gpio_button_callback,
-                bouncetime=300,
-            )
-            print(
-                f"kiosk-controller: physical next-view button on GPIO BCM {pin} (edge detection; other leg to GND)",
-                file=sys.stderr,
-            )
-        except Exception as edge_err:
-            # Newer Pi OS kernels often fail add_event_detect ("Failed to add edge detection"); poll instead.
-            print(
-                f"kiosk-controller: GPIO edge detection unavailable ({edge_err!r}); using poll fallback",
-                file=sys.stderr,
-            )
-            threading.Thread(
-                target=_gpio_poll_loop,
-                args=(pin,),
-                daemon=True,
-                name="kiosk-gpio-poll",
-            ).start()
-            print(
-                f"kiosk-controller: physical next-view button on GPIO BCM {pin} (poll; other leg to GND)",
-                file=sys.stderr,
-            )
+        # Always poll: supports long-press / multi-tap; add_event_detect often fails on newer Pi OS kernels.
+        threading.Thread(
+            target=_gpio_gesture_poll_loop,
+            args=(pin,),
+            daemon=True,
+            name="kiosk-gpio-gestures",
+        ).start()
+        print(
+            f"kiosk-controller: GPIO BCM {pin}: short tap(s)=next view, "
+            f"hold {GPIO_LONG_PRESS_SEC:g}s=Dakboard, 3 taps=toggle auto-rotate",
+            file=sys.stderr,
+        )
         _gpio_pin_used = pin
         atexit.register(_gpio_cleanup)
     except Exception as e:
